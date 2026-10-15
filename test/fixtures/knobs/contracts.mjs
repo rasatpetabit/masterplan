@@ -115,7 +115,7 @@ export const REGISTRY = [
   {
     id: 'format_pin',
     kind: 'state',
-    describe: 'the goals format pin (legacy vs schema_backed) changes the canonical goals hash byte-for-byte — what checkpoints, finish and split-brain bind',
+    describe: 'the format pin (legacy vs schema_backed) changes the canonical Intent/goals hash byte-for-byte — what checkpoints, finish and split-brain bind',
     values: ['legacy', 'schema_backed'],
     vary: (input, v) => ({ ...input, format_pin: v }),
     promptOnly: false,
@@ -532,7 +532,7 @@ export const REGISTRY = [
   {
     id: 'goals_enabled',
     kind: 'state',
-    describe: 'goals_enabled true vs absent changes the finish spec-gate re-arm and goal machinery',
+    describe: 'goals_enabled true vs absent changes the capture seam at set-phase plan',
     values: [true, false],
     vary: (input, v) => ({ ...input, 'goals_enabled': v }),
     promptOnly: false,

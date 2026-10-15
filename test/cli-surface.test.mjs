@@ -140,7 +140,7 @@ test('KNOWN_FLAGS is a closed set (no stray empty/space names)', () => {
   for (const name of KNOWN_FLAGS) {
     assert.ok(/^[a-z0-9][a-z0-9-]*$/.test(name), `malformed KNOWN_FLAGS entry: ${JSON.stringify(name)}`);
   }
-  assert.ok(isKnownFlag('state') && isKnownFlag('result-file') && isKnownFlag('goals-choice'));
+  assert.ok(isKnownFlag('state') && isKnownFlag('result-file') && isKnownFlag('intent-choice') && isKnownFlag('verify-output'));
   assert.ok(!isKnownFlag('definitely-not-a-real-flag'));
 });
 
@@ -157,29 +157,32 @@ test('A7 fail-closed applies to mutating verbs, not just read-only ones', () => 
   assert.match(r.stderr, /unknown flag --typod-flag/);
 });
 
-test('A1: finish-step recognizes goal-gate flags before attempting state reads', () => {
+test('A1: finish-step recognizes the intent-gate flags before attempting state reads', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-goals-'));
   try {
     // A known flag reaches state loading. Both ENOENT and an unknown flag can
     // exit 2, so assert the diagnostic instead of mistaking the shared code.
     const r = run([
       'finish-step', `--state=${path.join(dir, 'missing.yml')}`,
-      '--session=cli-surface-test', '--goals-choice=bogus',
+      '--session=cli-surface-test', '--intent-choice=bogus',
     ]);
     assert.notEqual(r.status, 0, 'missing state must be rejected');
-    assert.doesNotMatch(r.stderr, /unknown flag --goals-choice/);
+    assert.doesNotMatch(r.stderr, /unknown flag --intent-choice/);
     assert.match(r.stderr, /ENOENT/, `recognized flag should reach state loading: ${r.stderr}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('A1: --goal-check and --goals-choice are documented AND recognized (A7 scan closure)', () => {
-  assert.ok(isKnownFlag('goal-check'), '--goal-check must be a known flag');
-  assert.ok(isKnownFlag('goals-choice'), '--goals-choice must be a known flag');
+test('A1: --intent-choice and --verify-output are documented AND recognized (A7 scan closure)', () => {
+  assert.ok(isKnownFlag('intent-choice'), '--intent-choice must be a known flag');
+  assert.ok(isKnownFlag('verify-output'), '--verify-output must be a known flag');
+  assert.ok(!isKnownFlag('goals-choice'), 'the retired --goals-choice is no longer known');
+  assert.ok(!isKnownFlag('goal-check'), 'the retired --goal-check is no longer known');
   const prompt = fs.readFileSync(path.join(ROOT, 'commands/masterplan.md'), 'utf8');
-  assert.ok(prompt.includes('--goal-check=failed'), 'prompt must teach --goal-check=failed');
-  assert.ok(prompt.includes('--goals-choice=fix'), 'prompt must teach --goals-choice=fix');
-  assert.ok(prompt.includes('--goals-choice=waiver'), 'prompt must teach --goals-choice=waiver');
-  assert.ok(prompt.includes('--goals-choice=abort'), 'prompt must teach --goals-choice=abort');
+  assert.ok(prompt.includes('--intent-choice=waiver'), 'prompt must teach --intent-choice=waiver');
+  assert.ok(prompt.includes('--intent-choice=abort'), 'prompt must teach --intent-choice=abort');
+  assert.ok(prompt.includes('--verify-output='), 'prompt must teach the verify-output transport');
+  assert.ok(!prompt.includes('--goals-choice'), 'the retired flag must not be taught');
+  assert.ok(!prompt.includes('--goal-check='), 'the retired flag must not be taught');
 });

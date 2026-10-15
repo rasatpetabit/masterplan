@@ -1,19 +1,20 @@
-// test/agents-compat.test.mjs — the v2 assessor/reviewer prompts and their v1 compatibility
-// mode (wave task 15).
+// test/agents-compat.test.mjs — the v2 reviewer prompt's v1 compatibility mode (assessor half
+// retired with the goal blocks) and the final-only Intent assessor's contract.
 //
-// This run's v10 prompts are dispatched by a PINNED v9.10.0 finish while both surfaces already
-// serve v10 (§10 steps 4 and 6), so one prompt file has to satisfy both recorders during the
-// changeover. These tests read the prompts as data and assert the contract they declare, then
-// put a v1-shaped result through the v9-compatible validator that will actually judge it.
+// The reviewer is still dispatched by a PINNED v9.10.0 finish while both surfaces serve v10
+// (§10 steps 4 and 6), so its prompt file has to satisfy both recorders during the changeover;
+// these tests read the prompts as data and assert the contract they declare. The assessor
+// (agents/mp-intent-assessor.md) is final-mode only now: the enumerated goal blocks are
+// removed, so its whole job is the deployed-vs-Intent verdict.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseGoals, validateGoalCheckReceipt, INTENT_VERDICTS, GOAL_VERDICTS } from '../lib/goals.mjs';
+import { INTENT_VERDICTS } from '../lib/goals.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ASSESSOR = fs.readFileSync(path.join(REPO, 'agents', 'mp-goal-assessor.md'), 'utf8');
+const ASSESSOR = fs.readFileSync(path.join(REPO, 'agents', 'mp-intent-assessor.md'), 'utf8');
 const REVIEWER = fs.readFileSync(path.join(REPO, 'agents', 'mp-adversarial-reviewer.md'), 'utf8');
 
 // The prompts are markdown; a "section" is a heading and everything up to the next heading of
@@ -35,32 +36,24 @@ function section(text, headingPattern) {
 }
 
 // ---------------------------------------------------------------------------
-// The assessor's two modes
+// The assessor: final mode only
 // ---------------------------------------------------------------------------
 
-test('the assessor declares two distinct assessment modes', () => {
-  const modes = section(ASSESSOR, /two assessment modes/i);
-  assert.ok(modes, 'the assessor must declare its modes in a section of its own');
+test('the assessor declares exactly ONE assessment mode: final, post-live', () => {
+  const modes = section(ASSESSOR, /usecase: claim-assessment|ONE assessment mode/i);
+  assert.ok(modes, 'the assessor must declare its mode in a section of its own');
   const m = flat(modes);
-  assert.match(m, /implementation assessment/i);
-  assert.match(m, /final assessment/i);
-  // The implementation pass runs before the disposition, over the branch diff and verify output.
-  assert.match(m, /before the disposition/i);
-  assert.match(m, /branch diff/i);
+  assert.match(m, /final/i);
   // The final pass runs after the live check, over the deployed base and the deploy chain.
   assert.match(m, /after the live check/i);
   assert.match(m, /deployed base/i);
   assert.match(m, /deploy-event chain|deploy chain/i);
-});
-
-test('only the final mode returns an intent verdict, and the prompt says so in both directions', () => {
-  const modes = flat(section(ASSESSOR, /two assessment modes/i));
-  // The implementation mode is explicitly told NOT to answer the intent question...
-  assert.match(modes, /no `intent_verdict`/i);
-  // ...and the final mode is explicitly told to.
-  assert.match(modes, /\*\*plus\*\* the `intent_verdict`/i);
-  // An unlabelled or unbound brief degrades to the implementation mode rather than guessing.
-  assert.match(modes, /treat it as an implementation assessment/i);
+  // The retired implementation-mode per-goal pass is explicitly gone.
+  assert.match(m, /implementation-mode/i);
+  assert.match(m, /gone|retired/i);
+  // No per-goal verdict surface survives anywhere in the brief.
+  assert.doesNotMatch(flat(ASSESSOR), /per-goal verdict/i);
+  assert.doesNotMatch(flat(ASSESSOR), /"achieved"/);
 });
 
 test('the intent verdict is the three-value scale the library validates', () => {
@@ -70,9 +63,11 @@ test('the intent verdict is the three-value scale the library validates', () => 
   for (const v of INTENT_VERDICTS) {
     assert.ok(verdictSection.includes(`"${v}"`), `the prompt must name the ${v} verdict`);
   }
-  // ...and it is judged against the Intent block, not merely the goal list.
+  // ...and it is judged against the Intent block, not merely executed tasks or green tests.
   assert.match(vs, /## Intent|Intent.? block/i);
-  assert.match(vs, /achieve every listed goal and still miss|still miss what it was for/i);
+  assert.match(vs, /land every planned task and still miss|still miss what it was for/i);
+  // Historical G blocks are provenance, never the yardstick.
+  assert.match(vs, /provenance, not the yardstick/i);
 });
 
 test('the final receipt binds the three recorder-supplied values, verbatim', () => {
@@ -87,39 +82,35 @@ test('the final receipt binds the three recorder-supplied values, verbatim', () 
   assert.match(flat(bindings), /cannot produce a final assessment/i);
 });
 
-test('the per-goal verdict scale and the missing-evidence floor are unchanged', () => {
-  for (const v of GOAL_VERDICTS) {
-    assert.ok(ASSESSOR.includes(`"${v}"`), `the per-goal ${v} verdict must survive the v2 change`);
+test('the receipt echoes the branch binding from the ledger, never invents branch facts', () => {
+  const bindings = flat(section(ASSESSOR, /final receipt.*binding|binding/i));
+  for (const field of ['head_sha', 'base_diff_hash', 'verify_output_hash']) {
+    assert.ok(bindings.includes(field) || flat(ASSESSOR).includes(`"${field}"`), `the prompt must echo ${field}`);
   }
+  assert.match(flat(ASSESSOR), /verify_passed/i, 'the branch binding is the recorded verify_passed');
+});
+
+test('the missing-evidence floor is unchanged: unverifiable is at best partial, never met', () => {
   const rule = section(ASSESSOR, /missing-evidence rule/i);
   assert.ok(rule);
-  assert.match(flat(rule), /at best \*\*`partial`\*\*|at best `partial`/i);
-  assert.match(flat(rule), /never \*{0,2}`?achieved`?\*{0,2}/i);
-});
-
-test('the per-goal evidence classes are all still declared', () => {
-  const phase1 = section(ASSESSOR, /Phase 1/i);
-  assert.ok(phase1);
-  for (const cls of ['test', 'command', 'artifact', 'docs']) {
-    assert.match(phase1, new RegExp(`\\*\\*${cls}\\*\\*`), `evidence class ${cls} must stay declared`);
-  }
+  const r = flat(rule);
+  assert.match(r, /at best \*\*`partial`\*\*|at best `partial`/i);
+  assert.match(r, /never \*{0,2}`?met`?\*{0,2}/i);
 });
 
 // ---------------------------------------------------------------------------
-// v1 mode
+// v1 mode (reviewer only — the assessor's v1 mode retired with the goal blocks)
 // ---------------------------------------------------------------------------
 
-test('both prompts declare a v1 mode and how to detect it', () => {
-  for (const [name, text] of [['assessor', ASSESSOR], ['reviewer', REVIEWER]]) {
-    const raw = section(text, /v1 mode/i);
-    assert.ok(raw, `${name} must declare a v1 mode section`);
-    const v1 = flat(raw);
-    // Detected from the inputs, not announced by the caller — a v9 orchestrator has no way
-    // to name a mode it does not know about.
-    assert.match(v1, /detect it from the inputs/i, name);
-    assert.match(v1, /v9/i, name);
-    assert.match(v1, /no `intent_verdict`/i, name);
-  }
+test('the reviewer declares a v1 mode and how to detect it', () => {
+  const raw = section(REVIEWER, /v1 mode/i);
+  assert.ok(raw, 'the reviewer must declare a v1 mode section');
+  const v1 = flat(raw);
+  // Detected from the inputs, not announced by the caller — a v9 orchestrator has no way
+  // to name a mode it does not know about.
+  assert.match(v1, /detect it from the inputs/i);
+  assert.match(v1, /v9/i);
+  assert.match(v1, /no `intent_verdict`/i);
 });
 
 test('the reviewer v1 mode names its trigger and its whole v9 envelope', () => {
@@ -140,138 +131,6 @@ test('the reviewer v1 mode names its trigger and its whole v9 envelope', () => {
   assert.match(outputSection, /verdict: blocking \| advisory \| clean \| inconclusive/);
 });
 
-test('the assessor names both v1 triggers: no Intent block, or the legacy single dispatch', () => {
-  const raw = section(ASSESSOR, /v1 mode/i);
-  const v1 = flat(raw);
-  assert.match(v1, /no \*\*`## Intent` block\*\*|no `?## Intent`? block/i);
-  assert.match(v1, /single-dispatch|single dispatch/i);
-  // In v1 the stronger bindings are omitted too — a v9 recorder has no contract for them.
-  for (const field of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
-    assert.ok(raw.includes(field), `v1 mode must say ${field} is omitted`);
-  }
-});
-
-test('a goals document without an Intent block is what v1 mode keys on', () => {
-  const v1Goals = [
-    'topic: make the widget faster',
-    '',
-    '## G1: Cut p99 latency',
-    'signal: test',
-    'evidence: npm test -- latency',
-    '',
-    '## G2: Keep the API stable',
-    'signal: test',
-    'evidence: npm test -- api',
-    '',
-  ].join('\n');
-  const parsed = parseGoals(v1Goals);
-  assert.equal(parsed.goals.length, 2);
-  // No Intent block is present, which is exactly the condition the prompt names.
-  assert.equal(/^##\s+Intent\b/m.test(v1Goals), false);
-  const v2Goals = `${v1Goals}\n## Intent\nwhy: the widget is too slow\n`;
-  assert.equal(/^##\s+Intent\b/m.test(v2Goals), true, 'and a v2 document is distinguishable');
-
-  // The parsed document DRIVES the validation rather than sitting beside it: the expected goal
-  // set comes from this document, so a parser that produced different ids would fail here.
-  const r = validateGoalCheckReceipt(legacyReceipt(), checkExpected({ goals: parsed.goals }));
-  assert.equal(r.ok, true, r.error);
-  assert.deepEqual(parsed.goals.map((g) => g.id), ['G1', 'G2']);
-  // ...and a receipt whose verdicts do not cover THIS document's goals is refused.
-  const missing = validateGoalCheckReceipt(
-    legacyReceipt({ verdicts: { G1: { verdict: 'achieved', evidence: 'only one goal judged' } } }),
-    checkExpected({ goals: parsed.goals }),
-  );
-  assert.equal(missing.ok, false);
-  assert.match(missing.error, /G2/);
-});
-
-// ---------------------------------------------------------------------------
-// A v1-shaped result must satisfy the v9-compatible recorder
-// ---------------------------------------------------------------------------
-
-const checkExpected = (over = {}) => ({
-  goalsHash: 'sha256:gh',
-  headSha: 'headabc',
-  baseDiffHash: 'sha256:diff',
-  verifyOutputHash: 'sha256:vout',
-  clean: true,
-  goals: [{ id: 'G1' }, { id: 'G2' }],
-  ...over,
-});
-
-// The receipt a v9 recorder builds around a legacy assessor's per-goal array.
-const legacyReceipt = (over = {}) => ({
-  goals_hash: 'sha256:gh',
-  head_sha: 'headabc',
-  base_diff_hash: 'sha256:diff',
-  verify_output_hash: 'sha256:vout',
-  clean: true,
-  verdicts: {
-    G1: { verdict: 'achieved', evidence: 'latency test passes at p99 < 100ms' },
-    G2: { verdict: 'partial', evidence: 'api tests pass; one endpoint undocumented' },
-  },
-  dispatch_id: 'disp-legacy-1',
-  model: 'legacy-assessor',
-  output_tokens: 412,
-  ts: '2026-07-01T00:00:00Z',
-  ...over,
-});
-
-test('a v1-mode assessor result validates against the v9-compatible goal-check validator', () => {
-  const r = validateGoalCheckReceipt(legacyReceipt(), checkExpected());
-  assert.equal(r.ok, true, r.error);
-  assert.equal(r.provenance_kind, 'assessor');
-  // Nothing v2-shaped leaks into a v1 receipt's normalized form.
-  assert.equal(r.normalized.final, undefined);
-  assert.equal(r.normalized.intent_verdict, undefined);
-  for (const field of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
-    assert.equal(r.normalized[field], undefined, `${field} must not appear on a v1 receipt`);
-  }
-});
-
-test('a v1 receipt is neither required to carry an intent verdict nor allowed to', () => {
-  // Not required: the receipt above has none and validates.
-  assert.equal(validateGoalCheckReceipt(legacyReceipt(), checkExpected()).ok, true);
-  // Not allowed: emitting one in v1 mode is exactly the fabrication the prompt forbids, and
-  // the validator refuses it rather than quietly accepting a post-live judgement.
-  const fabricated = validateGoalCheckReceipt(
-    legacyReceipt({ intent_verdict: { verdict: 'met', evidence: 'it feels right' } }),
-    checkExpected(),
-  );
-  assert.equal(fabricated.ok, false);
-  assert.match(fabricated.error, /only by the final assessment/);
-});
-
-test('a final v2 receipt keeps the stronger bindings the v1 shape omits', () => {
-  const finalExpected = {
-    ...checkExpected(),
-    final: true,
-    deployBaseSha: 'deploybase1',
-    deployChainHash: 'sha256:chain',
-    liveCheckDigest: 'sha256:live',
-  };
-  const finalReceipt = legacyReceipt({
-    deploy_base_sha: 'deploybase1',
-    deploy_chain_hash: 'sha256:chain',
-    live_check_digest: 'sha256:live',
-    intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
-  });
-  const ok = validateGoalCheckReceipt(finalReceipt, finalExpected);
-  assert.equal(ok.ok, true, ok.error);
-  assert.equal(ok.normalized.final, true);
-  assert.equal(ok.normalized.intent_verdict.verdict, 'met');
-  // ...and each binding is normalized to the value the RECORDER supplied.
-  assert.equal(ok.normalized.deploy_base_sha, 'deploybase1');
-  assert.equal(ok.normalized.deploy_chain_hash, 'sha256:chain');
-  assert.equal(ok.normalized.live_check_digest, 'sha256:live');
-
-  // The v1 shape cannot be passed off as a final assessment: the bindings are what make a
-  // final verdict mean anything.
-  const unbound = validateGoalCheckReceipt(legacyReceipt(), finalExpected);
-  assert.equal(unbound.ok, false);
-  assert.match(unbound.error, /deploy_base_sha/);
-});
-
 // ---------------------------------------------------------------------------
 // The prompts stay dispatchable
 // ---------------------------------------------------------------------------
@@ -287,6 +146,8 @@ test('both prompts keep their frontmatter contract', () => {
     assert.match(fm[1], /^preset: breaker$/m, name);
     assert.match(text, /^## usecase: (claim-assessment|adversarial-assessment)$/m, name);
   }
+  // The assessor's registered name matches its file.
+  assert.match(ASSESSOR, /^name: mp-intent-assessor$/m);
 });
 
 test('the read-only and injection-boundary rules survive the v2 additions', () => {

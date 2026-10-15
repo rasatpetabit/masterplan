@@ -107,7 +107,7 @@ function readEvents(bundleDir) {
 // ---- a REAL CLI-walked intent-rejected predecessor (adversary r1 finding 3) ----------------
 // The reviewer rejected the hand-written predecessor (a fabricated incomplete_authorized + a
 // direct state.status mutation). This builds a bundle the CLI can actually finish, walks it
-// through `mp finish-step` / `mp record-goal-check` to an archived intent_rejected:intent
+// through `mp finish-step` / `mp record-intent-check` to an archived intent_rejected:intent
 // state — the same real walk pattern as test/cli-surface.test.mjs — and leaves the real
 // authorization + correction on the ledger for a successor to project.
 
@@ -185,19 +185,11 @@ function walkCliToIntentRejected(fx, successor) {
   };
   let op = step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
-  op = step(['--verify-passed']);
-  assert.equal(op.op, 'run_goal_check', JSON.stringify(op));
-  const head = cliWalkGit(fx.WT, ['rev-parse', 'HEAD']);
-  const implReceipt = {
-    goals_hash: fx.gHash, head_sha: head, base_diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo',
-    clean: true,
-    verdicts: { G1: { verdict: 'achieved', evidence: 'the stage ran' }, G2: { verdict: 'achieved', evidence: 'the live check gated' }, G3: { verdict: 'achieved', evidence: 'the operator was asked' } },
-    dispatch_id: 'cli-impl', model: 'cli-assessor', output_tokens: 10, ts: '2026-01-01T00:00:00Z',
-  };
-  const impl = run(['record-goal-check', S, `--head-sha=${head}`, '--base=main', '--diff-hash=sha256:diff',
-    '--verify-output-hash=sha256:vo', `--receipt=${JSON.stringify(implReceipt)}`]);
-  assert.equal(impl.status, 0, impl.stderr);
-  op = step();
+  // The pass answer records the verify_passed branch binding (git facts computed by the CLI);
+  // the final receipt below echoes the LEDGER's recorded values.
+  const vout = path.join(path.dirname(fx.MAIN), 'verify-output.txt');
+  fs.writeFileSync(vout, 'suite green\n');
+  op = step(['--verify-passed', `--verify-output=${vout}`]);
   if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
   assert.equal(op.gate, 'branch_finish', JSON.stringify(op));
   op = step(['--choice=merge']);
@@ -208,17 +200,20 @@ function walkCliToIntentRejected(fx, successor) {
   const digestFile = fx.digestFile;
   op = step(['--deploy-step-done=live_check[0]', '--exit=0', `--digest-file=${digestFile}`]);
   assert.equal(op.op, 'run_final_check', JSON.stringify(op));
+  // The branch binding the CLI recorded at the pass answer — the values the receipt must echo.
+  const binding = readEvents(fx.bundleDir).reverse().find((e) => e.type === 'verify_passed').data;
   const finReceipt = {
-    goals_hash: fx.gHash, head_sha: fx.headAtBuild, base_diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo',
+    goals_hash: fx.gHash, head_sha: binding.head_sha,
+    base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
+    verify_output_hash: binding.verify_output_hash ?? 'sha256:vo',
     clean: true,
-    verdicts: { G1: { verdict: 'achieved', evidence: 'the stage ran' }, G2: { verdict: 'achieved', evidence: 'the live check gated' }, G3: { verdict: 'achieved', evidence: 'the operator was asked' } },
     deploy_base_sha: op.deploy_base_sha, deploy_chain_hash: op.deploy_chain_hash,
     live_check_digest: op.live_digest,
     intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
     dispatch_id: 'cli-fin', model: 'cli-assessor', output_tokens: 10, ts: '2026-01-01T00:00:00Z',
   };
-  const fin = run(['record-goal-check', S, `--head-sha=${fx.headAtBuild}`, '--base=main', '--diff-hash=sha256:diff',
-    '--verify-output-hash=sha256:vo', '--final', `--base-sha=${op.deploy_base_sha}`,
+  const fin = run(['record-intent-check', S,
+    `--base-sha=${op.deploy_base_sha}`,
     `--deploy-chain-hash=${op.deploy_chain_hash}`, `--digest-file=${digestFile}`, `--receipt=${JSON.stringify(finReceipt)}`]);
   assert.equal(fin.status, 0, fin.stderr);
   op = step();
@@ -363,7 +358,7 @@ test('a concurrent seed observes the repo seed lock held by a REAL first seed in
 
 // ---- 5. runs list exposes the fields G1 names + the reconstructed overlap trace ----------
 
-test('runs list exposes topic, goals, planned_paths, worktree, and the reconstructed overlap decision', () => {
+test('runs list exposes topic, planned_paths, worktree, and the reconstructed overlap decision', () => {
   const repo = makeGitRepo(tmp());
   const review = mintReview(repo);
   const statePath = path.join(repo, 'docs', 'masterplan', 'alpha', 'state.yml');
@@ -390,11 +385,7 @@ test('runs list exposes topic, goals, planned_paths, worktree, and the reconstru
   const rec = out.runs.find((x) => x.slug === 'alpha');
   assert.ok(rec, 'alpha is discovered');
   assert.equal(rec.topic, 'the alpha topic');
-  assert.deepEqual(rec.goals, [
-    { id: 'G1', text: 'goal a' },
-    { id: 'G2', text: 'goal b' },
-    { id: 'G3', text: 'goal c' },
-  ]);
+  assert.equal('goals' in rec, false, 'the goal list is no longer part of the runs record');
   assert.deepEqual(rec.planned_paths, ['lib/a.mjs', 'lib/m.mjs', 'lib/z.mjs']); // sorted, deduped union
   assert.equal(rec.worktree, '.worktrees/alpha-wt');
   // The reconstruction: the durable overlap_review event is the source, so outcome + the
@@ -474,8 +465,8 @@ test('§8 plan-level planned_paths overlap: the new run genuinely intersects the
 test('§8 archived predecessor with intent rejection: the correction text survives on the durable ledger (real CLI walk)', () => {
   // The reviewer rejected the hand-written predecessor (a fabricated incomplete_authorized +
   // a direct state.status mutation, with no genuine overlap). This drives the predecessor
-  // through the REAL CLI to an archived intent_rejected:intent state (finish-step + the
-  // record-goal-check implementation/final receipts — the same 11-step walk as
+  // through the REAL CLI to an archived intent_rejected:intent state (finish-step's
+  // verify_passed binding + the record-intent-check final receipt — the same walk as
   // test/cli-surface.test.mjs), gives the new topic a GENUINE overlap with the archived run,
   // then seeds the successor with --predecessor and asserts the REAL candidate + projection.
   const tmpRoot = tmp();
@@ -532,11 +523,10 @@ test('§8 absence of conflicts: an empty inventory seeds with zero candidates an
   const ov = evs.find((e) => e.type === 'overlap_review');
   assert.equal(ov.outcome, 'proceed');
   assert.deepEqual(ov.candidates, []);
-  // The run lists with an empty planned_paths/goals (no artifacts yet) — no false conflict.
+  // The run lists with an empty planned_paths (no artifacts yet) — no false conflict.
   const listed = JSON.parse(run(['runs', 'list', `--repo-root=${repo}`]).stdout);
   const solo = listed.runs.find((x) => x.slug === 'solo');
   assert.deepEqual(solo.planned_paths, []);
-  assert.deepEqual(solo.goals, []);
   assert.equal(solo.overlap.outcome, 'proceed');
 });
 

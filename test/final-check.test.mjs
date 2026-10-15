@@ -122,26 +122,31 @@ function mkFixture({ slug = 'fc', done = DONE_WITH_LIVE, goalsMd = GOALS_MD } = 
     data: { hash: specGateHash(bundleDir), count: 0, base: 'main' },
   });
   const gHash = goalsHash(goalsMd);
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
-
-  // The implementation assessment, so the run reaches the deploy stage at all.
-  const recordImplementationCheck = () => appendEvent(bundleDir, {
-    type: 'goal_check', ts: '2026-01-01T00:00:01Z',
-    data: {
-      goals_hash: gHash, head_sha: git(WT, 'rev-parse', 'HEAD'), base: 'main',
-      diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo', provenance_kind: 'assessor',
-      verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
-    },
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
   });
 
   // Captured now: the disposition tears the worktree down, so it cannot be read later.
   const headAtBuild = git(WT, 'rev-parse', 'HEAD');
-  return { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, recordImplementationCheck };
+  // The branch binding the verify pass records (the verify_passed event finish-step appends
+  // with git facts COMPUTED from the worktree): the same source finalReceiptFor validates
+  // final receipts against. Read fresh at call time.
+  const branchBinding = () => {
+    const evs = readEvents(bundleDir);
+    return [...evs].reverse().find((e) => e.type === 'verify_passed')?.data ?? null;
+  };
+  return { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, branchBinding };
 }
 
-// verify -> retro -> branch_finish -> merge, landing in the deploy stage.
+// verify (records the verify_passed branch binding) -> retro -> branch_finish -> merge,
+// landing in the deploy stage.
 function walkToDeploy(fx) {
-  fx.recordImplementationCheck();
   let op = fx.step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
   op = fx.step({ verify: 'pass' });
@@ -167,25 +172,24 @@ function runDeployChain(fx, { liveDigestText = 'live check output\n' } = {}) {
 // A COMPLETE final receipt — the shape a real recorder writes, because the machine hands each
 // candidate to lib/goals.mjs's validator and a partial one is not a final assessment.
 function recordFinalCheck(fx, op, { verdict = 'met', evidence = 'the deployed surface answers as intended', over = {} } = {}) {
+  // The receipt echoes the BRANCH BINDING the verify pass recorded (git facts computed by
+  // the machine from the worktree) — exactly what the recorder and finalReceiptFor demand.
+  const binding = fx.branchBinding();
+  assert.ok(binding, 'the walk recorded a verify_passed branch binding');
   appendEvent(fx.bundleDir, {
     type: 'goal_check', ts: '2026-01-01T00:00:09Z',
     data: {
       final: true,
       goals_hash: fx.gHash,
-      head_sha: fx.headAtBuild,
-      base_diff_hash: 'sha256:diff',
-      verify_output_hash: 'sha256:vo',
+      head_sha: binding.head_sha,
+      base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
+      verify_output_hash: binding.verify_output_hash, // echoes the binding — never an invented value (finish-bindings-2)
       clean: true,
       deploy_base_sha: op.deploy_base_sha,
       deploy_chain_hash: op.deploy_chain_hash,
       live_check_digest: op.live_digest,
       provenance_kind: 'assessor',
       provenance: { dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256 },
-      verdicts: {
-        G1: { verdict: 'achieved', evidence: 'the stage ran' },
-        G2: { verdict: 'achieved', evidence: 'the live check gated the archive' },
-        G3: { verdict: 'achieved', evidence: 'the operator was asked' },
-      },
       intent_verdict: { verdict, evidence },
       ...over,
     },
@@ -214,7 +218,7 @@ test('the final check is requested after the deploy stage, bound to what was dep
   // same however the operator routed it to a file.
   assert.equal(op.live_digest, liveCheckDigest(path.join(fx.tmp, 'live-digest.txt')));
   assert.equal(op.goals_path, path.join(fx.bundleDir, 'goals.md'));
-  assert.match(op.next, /record-goal-check --final/);
+  assert.match(op.next, /record-intent-check/);
   // Nothing is archived while the final answer is outstanding.
   assert.notEqual(readState(fx.statePath).status, 'archived');
 });
@@ -272,15 +276,15 @@ test('a met intent verdict opens intent_confirm, carrying the verdict and the li
 // A partial or missed final verdict
 // ---------------------------------------------------------------------------
 
-test('a partial or missed final verdict opens goals_unmet WITHOUT a fix option', () => {
+test('a partial or missed final verdict opens intent_unmet WITHOUT a fix option', () => {
   for (const verdict of ['partial', 'missed']) {
     const fx = mkFixture({ slug: `fc-${verdict}` });
     walkToDeploy(fx);
     const op = runDeployChain(fx);
     recordFinalCheck(fx, op, { verdict, evidence: 'the deployed thing does not do what was meant' });
     const gate = fx.step();
-    assert.equal(gate.gate, 'goals_unmet', JSON.stringify(gate));
-    assert.equal(gate.mode, 'final', 'the post-live mode, not the implementation one');
+    assert.equal(gate.gate, 'intent_unmet', JSON.stringify(gate));
+    assert.equal(gate.mode, 'final', 'the post-live failure mode');
     // Post-live the worktree is gone, so `fix` is not on offer — only waiver, abort, or a
     // rejection that names a successor.
     assert.deepEqual(gate.choices, ['waiver', 'abort', 'reject-intent']);
@@ -290,13 +294,13 @@ test('a partial or missed final verdict opens goals_unmet WITHOUT a fix option',
   }
 });
 
-test('a met verdict never opens goals_unmet', () => {
+test('a met verdict never opens intent_unmet', () => {
   const fx = mkFixture();
   walkToDeploy(fx);
   const op = runDeployChain(fx);
   recordFinalCheck(fx, op, { verdict: 'met' });
   assert.equal(fx.step().gate, 'intent_confirm');
-  assert.equal(readEvents(fx.bundleDir).some((e) => e.type === 'gate_opened' && e.id === 'goals_unmet'), false);
+  assert.equal(readEvents(fx.bundleDir).some((e) => e.type === 'gate_opened' && e.id === 'intent_unmet'), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -546,18 +550,18 @@ test('an implementation-class rejection carries no interview correction', () => 
   assert.match(rej.rejection_reason, /wrong artifact/, 'the reason is still recorded');
 });
 
-test('the final goals_unmet gate accepts reject-intent and REFUSES fix', () => {
-  // Finding: omitting `fix` from the rendered choices is not enforcement — a caller can submit
-  // any flag, and post-live there is no worktree to fix in.
+test('the intent_unmet gate accepts reject-intent and REFUSES fix (an unknown choice)', () => {
+  // `fix` is not a rendered choice and not a legal flag: post-live there is no worktree to
+  // fix in, and the engine vocabulary knows only waiver|abort.
   const fx = mkFixture({ slug: 'fc-unmet-final' });
   const gate = walkToFinalGate(fx, { verdict: 'partial' });
-  assert.equal(gate.gate, 'goals_unmet');
+  assert.equal(gate.gate, 'intent_unmet');
   assert.equal(gate.mode, 'final');
   assert.ok(!gate.choices.includes('fix'));
   const before = readEvents(fx.bundleDir).length;
-  assert.throws(() => fx.step({ goalsChoice: 'fix' }), /not available on the final goals_unmet gate/);
+  assert.throws(() => fx.step({ intentChoice: 'fix' }), /unknown --intent-choice 'fix'/);
   assert.equal(readEvents(fx.bundleDir).length, before, 'a refused answer writes nothing');
-  assert.equal(readState(fx.statePath).pending_gate?.id, 'goals_unmet', 'and leaves the gate open');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'intent_unmet', 'and leaves the gate open');
 
   fx.step({ intentRejected: { class: 'intent', reason: 'partial is not what was meant', successor: 'fc-successor-3' } });
   assert.ok(readEvents(fx.bundleDir).some((e) => e.type === 'incomplete_authorized' && String(e.reason).startsWith('intent_rejected')));
@@ -579,7 +583,7 @@ test('--intent-rejected requires a named successor and an open final gate', () =
   runDeployChain(clean);
   assert.throws(
     () => clean.step({ intentRejected: { class: 'intent', reason: 'r', successor: 's' } }),
-    /no open intent_confirm or final goals_unmet gate/,
+    /no open intent_confirm or intent_unmet gate/,
   );
 });
 
@@ -738,20 +742,76 @@ test('the completion_confirmed event carries the full binding it authorized', ()
   assert.ok(ev.receipt?.startsWith('sha256:'), 'the authorization stays auditable without re-deriving it');
 });
 
-test('a final assessment with NO implementation receipt is refused, not unconstrained', () => {
-  // Finding: with impl null, undefined expectations were handed to the validator, so the final
-  // receipt's branch bindings would be checked against nothing — self-validation by omission.
+test('a final assessment with NO binding source is refused, not unconstrained', () => {
+  // The design's final-receipt branch bindings: with no independently recorded verify_passed
+  // (or legacy implementation goal_check), the final receipt would validate its own branch
+  // bindings — self-validation by omission. Strip the binding source from the ledger and the
+  // selection surface refuses (regression case 6: no binding source).
   const fx = mkFixture({ slug: 'fc-noimpl' });
-  // walkToDeploy normally records the implementation check; drive the same walk without it by
-  // removing it from the ledger once the deploy stage is under way.
   walkToDeploy(fx);
   const chk = runDeployChain(fx);
   recordFinalCheck(fx, chk, { verdict: 'met' });
-  const kept = readEvents(fx.bundleDir).filter((e) => !(e.type === 'goal_check' && e.data?.final !== true));
+  const kept = readEvents(fx.bundleDir).filter((e) => e.type !== 'verify_passed');
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), kept.map((e) => `${JSON.stringify(e)}\n`).join(''));
   const op = fx.step();
   assert.equal(op.gate, 'final_check_invalid', JSON.stringify(op));
-  assert.match(op.error, /no implementation goal_check receipt/);
+  assert.match(op.error, /no verify_passed \(or legacy implementation goal_check\) to bind/);
+});
+
+test('final_check_invalid with NO binding source never advertises recording as the recovery (final-review advisory)', () => {
+  // The advisory: when the invalidity IS the missing binding source, record-intent-check
+  // refuses a replacement outright, so advertising `re-record` (and a `next` command) points
+  // at a door that cannot open. The gate names the actual state — no independent
+  // verification binding for the finish HEAD — and offers only the explicit incomplete
+  // abort. A genuinely replaceable invalid receipt (a binding stands; the receipt is
+  // malformed) keeps the recording guidance.
+  const fx = mkFixture({ slug: 'fc-no-binding-recovery' });
+  walkToDeploy(fx);
+  const chk = runDeployChain(fx);
+  recordFinalCheck(fx, chk, { verdict: 'met' });
+  const kept = readEvents(fx.bundleDir).filter((e) => e.type !== 'verify_passed');
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), kept.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  const op = fx.step();
+  assert.equal(op.gate, 'final_check_invalid', JSON.stringify(op));
+  assert.equal(op.branch_binding, null, 'the missing binding is the surfaced state');
+  assert.equal(op.next, undefined, 'no recorder command is advertised — it would be refused');
+  assert.deepEqual(op.choices, ['abort'], 'the explicit incomplete-abort route only');
+  assert.match(op.reason, /no independent verification binding stands for the finish head/);
+  assert.doesNotMatch(op.reason, /re-record/, 'the reason never frames recording as the recovery');
+
+  // The replaceable case keeps the guidance (binding present, receipt malformed).
+  const fx2 = mkFixture({ slug: 'fc-replaceable' });
+  walkToDeploy(fx2);
+  const chk2 = runDeployChain(fx2);
+  recordFinalCheck(fx2, chk2, { over: { clean: undefined } });
+  const op2 = fx2.step();
+  assert.equal(op2.gate, 'final_check_invalid');
+  assert.ok(op2.branch_binding, 'a binding stands');
+  assert.match(op2.next, /record-intent-check/);
+  assert.deepEqual(op2.choices, ['re-record', 'abort']);
+});
+
+test('a final receipt whose branch facts do not echo the verify_passed binding is refused', () => {
+  // Regression case 6 (tampered/self-supplied branch bindings): the receipt's head/diff are
+  // checked against the machine-computed verify_passed facts, never accepted as claimed.
+  const fx = mkFixture({ slug: 'fc-foreign-head' });
+  walkToDeploy(fx);
+  const chk = runDeployChain(fx);
+  const binding = fx.branchBinding();
+  recordFinalCheck(fx, chk, { verdict: 'met', over: { head_sha: 'f'.repeat(40) } });
+  let op = fx.step();
+  assert.equal(op.gate, 'final_check_invalid', JSON.stringify(op));
+  assert.match(op.error, /head_sha|HEAD/);
+  // A claimed diff hash that is not the computed one likewise refuses.
+  const fx2 = mkFixture({ slug: 'fc-foreign-diff' });
+  walkToDeploy(fx2);
+  const chk2 = runDeployChain(fx2);
+  recordFinalCheck(fx2, chk2, { verdict: 'met', over: { base_diff_hash: 'sha256:not-the-recorded-diff' } });
+  op = fx2.step();
+  assert.equal(op.gate, 'final_check_invalid', JSON.stringify(op));
+  assert.match(op.error, /base_diff_hash|diff/);
+  // Sanity: the binding the good receipts echo really is the recorded one.
+  assert.ok(binding && /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(binding.head_sha));
 });
 
 test('an unknown provenance_kind is invalid, not silently read as assessor provenance', () => {
@@ -777,7 +837,7 @@ test('final_check_invalid carries everything a replacement receipt needs', () =>
   assert.equal(op.deploy_chain_hash, chk.deploy_chain_hash);
   assert.equal(op.live_digest, chk.live_digest);
   assert.ok(fs.existsSync(op.live_digest_path), 'the evidence is readable');
-  assert.match(op.next, /record-goal-check --final/);
+  assert.match(op.next, /record-intent-check/);
   assert.ok(!op.next.includes('<deploy base>'), 'the command carries real values');
 
   // ...and recording a VALID receipt is the transition: re-entry picks it up.
@@ -791,7 +851,7 @@ test('abort answers EVERY final gate, and each names the gate it stopped at', ()
   // dead-end shape the evidence gate had.
   for (const [slug, arrange, expected] of [
     ['fc-abort-invalid', (fx, chk) => recordFinalCheck(fx, chk, { over: { clean: undefined } }), 'deploy_abort:final_check_invalid'],
-    ['fc-abort-unmet', (fx, chk) => recordFinalCheck(fx, chk, { verdict: 'missed', evidence: 'it does not do what was meant' }), 'deploy_abort:goals_unmet'],
+    ['fc-abort-unmet', (fx, chk) => recordFinalCheck(fx, chk, { verdict: 'missed', evidence: 'it does not do what was meant' }), 'deploy_abort:intent_unmet'],
   ]) {
     const fx = mkFixture({ slug });
     walkToDeploy(fx);
@@ -809,7 +869,7 @@ test('abort answers EVERY final gate, and each names the gate it stopped at', ()
   }
 });
 
-test('a WAIVER on the final goals_unmet gate is terminal — the gate does not reopen', () => {
+test('a WAIVER on the intent_unmet gate is terminal — the gate does not reopen', () => {
   // Finding: the implementation-phase waiver is deliberately not stage-terminal, so reusing it
   // here cleared the gate while leaving the same partial receipt in place, and the very next
   // evaluation reopened the identical gate forever.
@@ -817,12 +877,12 @@ test('a WAIVER on the final goals_unmet gate is terminal — the gate does not r
   walkToDeploy(fx);
   const chk = runDeployChain(fx);
   recordFinalCheck(fx, chk, { verdict: 'partial', evidence: 'half of it works' });
-  assert.equal(fx.step().gate, 'goals_unmet');
-  fx.step({ goalsChoice: 'waiver' });
+  assert.equal(fx.step().gate, 'intent_unmet');
+  fx.step({ intentChoice: 'waiver' });
   assert.ok(readEvents(fx.bundleDir).some((e) => e.type === 'incomplete_authorized' && e.reason === 'intent_waived'));
   let last = null;
   for (let i = 0; i < 8 && readState(fx.statePath).status !== 'archived'; i++) last = fx.step();
-  assert.notEqual(last?.gate, 'goals_unmet', 'the waived gate does not reopen');
+  assert.notEqual(last?.gate, 'intent_unmet', 'the waived gate does not reopen');
   assert.equal(readState(fx.statePath).status, 'archived', JSON.stringify(last));
   assert.equal(readEvents(fx.bundleDir).some((e) => e.type === 'completion_confirmed'), false);
 });

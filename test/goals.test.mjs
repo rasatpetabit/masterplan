@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, legacyGoalsHash, GOAL_VERDICTS, INTENT_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, INTENT_VERDICTS, validateUserApprovalReceipt, validateGoalCheckReceipt, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -64,8 +64,10 @@ tombstone_at: 2026-07-01T00:00:00Z
 });
 
 // --- VALIDATE TESTS ---
+// G blocks are historical content: neither required nor validated. The operational
+// content is the Intent block.
 
-test('validateGoals accepts a well-formed active set', () => {
+test('validateGoals accepts a document with historical G blocks (either call shape)', () => {
   const md = `## G1: Test
 signal: test
 
@@ -80,78 +82,53 @@ signal: artifact
   assert.equal(res2.ok, true);
 });
 
-test('validateGoals rejects empty / all-tombstone set', () => {
-  const emptyRes = validateGoals({ topicSeed: '', goals: [] });
-  assert.equal(emptyRes.ok, false);
+test('validateGoals accepts a zero-G document — goals are neither required nor counted', () => {
+  const md = `topic: ship it
 
-  const tombstonedMd = `## G1: Old
-tombstone_reason: done
-tombstone_at: 2026-01-01T00:00:00Z
+## Intent
+why: w
+outcome: o
+anti_goals:
+- a
+done_means: d
 `;
-  const tombstonedParsed = parseGoals(tombstonedMd);
-  const tombRes = validateGoals(tombstonedParsed);
-  assert.equal(tombRes.ok, false);
+  const res = validateGoals(parseGoals(md));
+  assert.equal(res.ok, true);
 });
 
-test('validateGoals rejects duplicate ids', () => {
-  const goals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G1', text: 'B', signal: 'test' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-  assert.match(res.error, /[Dd]uplicate/);
-});
-
-test('validateGoals rejects bad signal class', () => {
-  const goals = [
+test('validateGoals does not validate historical G content — arbitrary ids/signals/tombstones pass', () => {
+  // The G-block shape rules (unique ids, G<number> format, signal classes, tombstone
+  // completeness) are retired with the goal-block machinery.
+  const res = validateGoals([
     { id: 'G1', text: 'A', signal: 'vibes' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-  // Error should mention allowed classes or signal
-  assert(res.error.includes('test') || res.error.includes('artifact') || res.error.match(/signal/i));
+    { id: 'G1', text: 'B', signal: 'test' },
+    { id: 'X9', text: 'C', signal: 'test', tombstone: { reason: '' } },
+  ]);
+  assert.equal(res.ok, true);
 });
 
-test('validateGoals rejects bad id format', () => {
-  const goals = [
-    { id: 'X1', text: 'A', signal: 'test' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-});
+test('validateGoals validates the Intent fields when an Intent block is present', () => {
+  const md = `topic: t
 
-test('validateGoals rejects tombstone missing reason/amended_at', () => {
-  const goals = [
-    { id: 'G1', text: 'Active', signal: 'test' },
-    {
-      id: 'G2',
-      text: 'Tombstoned',
-      signal: 'test',
-      tombstone: { reason: '' },
-    },
-  ];
-  const res = validateGoals(goals);
+## Intent
+why: 
+outcome: o
+anti_goals:
+- a
+done_means: d
+`;
+  const res = validateGoals(parseGoals(md));
   assert.equal(res.ok, false);
+  assert.match(res.error, /Intent\.why must be a non-empty string/);
+
+  const badAnti = validateGoals({ topicSeed: 't', goals: [], intent: { why: 'w', outcome: 'o', done_means: 'd', anti_goals: 'nope' } });
+  assert.equal(badAnti.ok, false);
+  assert.match(badAnti.error, /anti_goals must be a list of strings/);
 });
 
 // --- AMENDMENT TESTS ---
 
-test('validateAmendment accepts stable ids with a new appended goal', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-    { id: 'G3', text: 'C', signal: 'docs' },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, true);
-});
-
-test('validateAmendment rejects a hard deletion (must tombstone)', () => {
+test('validateAmendment accepts goal churn while the anchor and Intent hold', () => {
   const old = [
     { id: 'G1', text: 'A', signal: 'test' },
     { id: 'G2', text: 'B', signal: 'command' },
@@ -159,144 +136,21 @@ test('validateAmendment rejects a hard deletion (must tombstone)', () => {
   const newGoals = [
     { id: 'G1', text: 'A', signal: 'test' },
   ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G2') || res.error.match(/tombstone/i));
-});
-
-test('validateAmendment accepts a removal expressed as a tombstone', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    {
-      id: 'G2',
-      text: 'B',
-      signal: 'command',
-      tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' },
-    },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, true);
-});
-
-test('validateAmendment rejects renumbering', () => {
-  // Old max num is 3. New goal G2 has num 2 <= 3, so it's considered a renumber/reuse error.
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G3', text: 'C', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G3', text: 'C', signal: 'command' },
-    { id: 'G2', text: 'B', signal: 'docs' },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, false);
-  assert.match(res.error, /renumber/i);
+  // A bare deletion, a renumbered addition, a tombstone — all inert now: G content is
+  // provenance, and the amendment's guarantees are the anchor and the Intent fields.
+  assert.equal(validateAmendment(old, newGoals).ok, true);
+  assert.equal(validateAmendment(old, [...newGoals, { id: 'G0', text: 'renumbered', signal: 'docs' }]).ok, true);
+  assert.equal(validateAmendment(old, [...old, { id: 'G2', text: 'B', signal: 'command', tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' } }]).ok, true);
 });
 
 test('validateAmendment propagates single-doc invalidity', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-  ];
-  const newGoals = [];
-  const res = validateAmendment(old, newGoals);
+  const old = { topicSeed: 't', goals: [], intent: { why: 'w', outcome: 'o', anti_goals: [], done_means: 'd' } };
+  const broken = { topicSeed: 't', goals: [], intent: { why: ' ', outcome: 'o', anti_goals: [], done_means: 'd' } };
+  const res = validateAmendment(old, broken);
   assert.equal(res.ok, false);
 });
 
-// --- CROSS-CHECK TESTS ---
-
-test('crossCheckGoals ok when md, state, event agree', () => {
-  const goals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const res = crossCheckGoals(goals, goals, goals);
-  assert.equal(res.ok, true);
-});
-
-test('crossCheckGoals hard-errors on divergent text (never vacuous skip)', () => {
-  const md = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const state = [{ id: 'G1', text: 'B', signal: 'test' }];
-  const event = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G1'));
-});
-
-test('crossCheckGoals hard-errors when a source is missing a goal', () => {
-  const md = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const state = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const event = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G2'));
-});
-
-test('crossCheckGoals treats null state as empty and still errors (no skip)', () => {
-  const md = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const state = null;
-  const event = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-});
-
-// --- AMEND-DIFF TESTS ---
-
-test('amendmentDiff records added/modified/tombstoned and omits unchanged', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B2', signal: 'command' },
-    { id: 'G3', text: 'C', signal: 'docs' },
-  ];
-  const diff = amendmentDiff(old, newGoals);
-
-  const g2Entry = diff.find((d) => d.id === 'G2');
-  assert.equal(g2Entry.change, 'modified');
-  assert.equal(g2Entry.old.text, 'B');
-  assert.equal(g2Entry.new.text, 'B2');
-
-  const g3Entry = diff.find((d) => d.id === 'G3');
-  assert.equal(g3Entry.change, 'added');
-  assert.equal(g3Entry.old, null);
-  assert.equal(g3Entry.new.text, 'C');
-
-  const g1Entry = diff.find((d) => d.id === 'G1');
-  assert.equal(g1Entry, undefined);
-});
-
-test('amendmentDiff records a tombstoning', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-  ];
-  const newGoals = [
-    {
-      id: 'G1',
-      text: 'A',
-      signal: 'test',
-      tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' },
-    },
-  ];
-  const diff = amendmentDiff(old, newGoals);
-
-  const g1Entry = diff.find((d) => d.id === 'G1');
-  assert.equal(g1Entry.change, 'tombstoned');
-  assert(g1Entry.old);
-  assert(g1Entry.new);
-});
+// (crossCheckGoals and amendmentDiff are retired with the goal-block machinery.)
 
 // --- GOALS-HASH TESTS ---
 
@@ -322,26 +176,6 @@ test('goalsHash is stable across incidental whitespace but changes on real edits
 test('goalsHash accepts a parsed object and matches the raw-text form', () => {
   const md = `## G1: Alpha\nsignal: test\n`;
   assert.equal(goalsHash(md), goalsHash(parseGoals(md)));
-});
-
-// --- WAIVER-KEY TESTS ---
-
-test('waiverKey invalidates on any later commit or amendment', () => {
-  const base = { goalsHash: 'sha256:aaa', headSha: 'head1', baseDiffHash: 'diff1' };
-  const k0 = waiverKey(base);
-  assert.equal(typeof k0, 'string');
-  // later commit -> new head -> different key
-  assert.notEqual(k0, waiverKey({ ...base, headSha: 'head2' }));
-  // amendment -> new goals hash -> different key
-  assert.notEqual(k0, waiverKey({ ...base, goalsHash: 'sha256:bbb' }));
-  // changed diff -> different key
-  assert.notEqual(k0, waiverKey({ ...base, baseDiffHash: 'diff2' }));
-});
-
-test('waiverKey returns null when any part is missing', () => {
-  assert.equal(waiverKey({ goalsHash: 'sha256:aaa', headSha: 'h' }), null);
-  assert.equal(waiverKey({}), null);
-  assert.equal(waiverKey(), null);
 });
 
 // --- USER-APPROVAL-RECEIPT TESTS ---
@@ -389,13 +223,7 @@ test('validateUserApprovalReceipt binds old+new hash on amendment', () => {
   assert.match(stale.error, /old_goals_hash/);
 });
 
-// --- GOAL-CHECK-RECEIPT TESTS ---
-
-const CHECK_GOALS = [
-  { id: 'G1', text: 'Alpha', signal: 'test' },
-  { id: 'G2', text: 'Beta', signal: 'command' },
-  { id: 'G3', text: 'Gamma', signal: 'docs', tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' } },
-];
+// --- FINAL-ASSESSMENT RECEIPT TESTS (validateGoalCheckReceipt, final mode) ---
 
 function checkExpected(overrides = {}) {
   return {
@@ -404,22 +232,25 @@ function checkExpected(overrides = {}) {
     baseDiffHash: 'sha256:diff',
     verifyOutputHash: 'sha256:vout',
     clean: true,
-    goals: CHECK_GOALS,
+    final: true,
+    deployBaseSha: 'deploybase1',
+    deployChainHash: 'sha256:chain',
+    liveCheckDigest: 'sha256:live',
     ...overrides,
   };
 }
 
-function goodCheckReceipt(overrides = {}) {
+function goodFinalReceipt(overrides = {}) {
   return {
     goals_hash: 'sha256:gh',
     head_sha: 'headabc',
     base_diff_hash: 'sha256:diff',
     verify_output_hash: 'sha256:vout',
     clean: true,
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'tests pass' },
-      G2: { verdict: 'partial', evidence: 'flag added, docs pending' },
-    },
+    intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
+    deploy_base_sha: 'deploybase1',
+    deploy_chain_hash: 'sha256:chain',
+    live_check_digest: 'sha256:live',
     dispatch_id: 'disp-1',
     model: 'gpt-5.5',
     output_tokens: 512,
@@ -428,90 +259,100 @@ function goodCheckReceipt(overrides = {}) {
   };
 }
 
-test('validateGoalCheckReceipt accepts a valid assessor receipt over all active goals', () => {
-  const res = validateGoalCheckReceipt(goodCheckReceipt(), checkExpected());
+test('validateGoalCheckReceipt accepts a valid final receipt', () => {
+  const res = validateGoalCheckReceipt(goodFinalReceipt(), checkExpected());
   assert.equal(res.ok, true, res.error);
   assert.equal(res.provenance_kind, 'assessor');
+  assert.equal(res.normalized.final, true);
+  assert.equal(res.normalized.intent_verdict.verdict, 'met');
 });
 
 test('validateGoalCheckReceipt rejects stale goals hash / head / diff (re-arm)', () => {
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt({ goals_hash: 'sha256:OTHER' }), checkExpected()).ok, false);
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt({ head_sha: 'OTHER' }), checkExpected()).ok, false);
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt({ base_diff_hash: 'OTHER' }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ goals_hash: 'sha256:OTHER' }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ head_sha: 'OTHER' }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ base_diff_hash: 'OTHER' }), checkExpected()).ok, false);
+});
+
+test('branch facts are required fields even when no binding source supplied them', () => {
+  // No expectation (the caller has no binding source): the FIELD is still required, so the
+  // receipt cannot arrive with no branch facts at all — only an unbound-but-present shape.
+  for (const drop of ['head_sha', 'base_diff_hash']) {
+    const r = goodFinalReceipt();
+    delete r[drop];
+    assert.equal(validateGoalCheckReceipt(r, checkExpected({ [drop === 'head_sha' ? 'headSha' : 'baseDiffHash']: undefined })).ok, false, drop);
+  }
 });
 
 test('validateGoalCheckReceipt rejects missing/mismatched verify_output_hash and clean status', () => {
-  const noVout = goodCheckReceipt();
+  const noVout = goodFinalReceipt();
   delete noVout.verify_output_hash;
   assert.equal(validateGoalCheckReceipt(noVout, checkExpected()).ok, false);
 
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt({ verify_output_hash: 'sha256:WRONG' }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ verify_output_hash: 'sha256:WRONG' }), checkExpected()).ok, false);
+  // A binding source with NO verify output hash (a pass answer without --verify-output) does
+  // not constrain the value — the receipt only needs a non-empty string.
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ verify_output_hash: 'sha256:OTHER' }), checkExpected({ verifyOutputHash: undefined })).ok, true);
 
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt({ clean: false }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ clean: false }), checkExpected()).ok, false);
   // recorder recomputed clean=false but receipt says true -> mismatch
-  assert.equal(validateGoalCheckReceipt(goodCheckReceipt(), checkExpected({ clean: false })).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt(), checkExpected({ clean: false })).ok, false);
 });
 
-test('validateGoalCheckReceipt requires a verdict over every non-tombstoned goal', () => {
-  const missingG2 = goodCheckReceipt({ verdicts: { G1: { verdict: 'achieved', evidence: 'x' } } });
-  const res = validateGoalCheckReceipt(missingG2, checkExpected());
-  assert.equal(res.ok, false);
-  assert.match(res.error, /G2/);
+test('the final bindings must be present and echo the recorder', () => {
+  for (const field of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
+    const r = goodFinalReceipt({ [field]: `${field === 'deploy_base_sha' ? 'x' : 'sha256:x'}` });
+    assert.equal(validateGoalCheckReceipt(r, checkExpected()).ok, false, field);
+  }
+  // Unbound recorder expectations (missing flags) are refused, never defaulted.
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt(), checkExpected({ deployBaseSha: undefined })).ok, false);
 });
 
-test('validateGoalCheckReceipt rejects bad verdict enum and empty evidence', () => {
-  const badEnum = goodCheckReceipt({ verdicts: { G1: { verdict: 'vibes', evidence: 'x' }, G2: { verdict: 'missed', evidence: 'y' } } });
-  assert.equal(validateGoalCheckReceipt(badEnum, checkExpected()).ok, false);
-
-  const emptyEv = goodCheckReceipt({ verdicts: { G1: { verdict: 'achieved', evidence: '' }, G2: { verdict: 'missed', evidence: 'y' } } });
-  assert.equal(validateGoalCheckReceipt(emptyEv, checkExpected()).ok, false);
+test('the intent verdict is validated: enum + non-empty evidence', () => {
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'yes-ish', evidence: 'e' } }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'met', evidence: '' } }), checkExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: undefined }), checkExpected()).ok, false);
+  for (const v of INTENT_VERDICTS) {
+    assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: v, evidence: 'e' } }), checkExpected()).ok, true, v);
+  }
 });
 
-test('validateGoalCheckReceipt rejects fabricated verdict for an unknown/tombstoned goal', () => {
-  const fab = goodCheckReceipt({
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'x' },
-      G2: { verdict: 'missed', evidence: 'y' },
-      G3: { verdict: 'achieved', evidence: 'tombstoned!' },
-    },
-  });
-  const res = validateGoalCheckReceipt(fab, checkExpected());
-  assert.equal(res.ok, false);
-  assert.match(res.error, /G3/);
+test('a legacy per-goal verdict table is tolerated, not validated', () => {
+  // Goal blocks are inert: historical receipts carry verdicts, new receipts omit them. Neither
+  // is cross-checked against a goal list — the intent verdict is the assessment.
+  const legacy = goodFinalReceipt({ verdicts: { G1: { verdict: 'achieved', evidence: 'x' } } });
+  assert.equal(validateGoalCheckReceipt(legacy, checkExpected()).ok, true, legacy.evidence);
+  assert.equal(legacy.verdicts.G1.verdict, 'achieved');
+  const noVerdicts = goodFinalReceipt();
+  delete noVerdicts.verdicts;
+  assert.equal(validateGoalCheckReceipt(noVerdicts, checkExpected()).ok, true);
 });
 
 test('validateGoalCheckReceipt rejects missing assessor provenance', () => {
-  const noTokens = goodCheckReceipt();
+  const noTokens = goodFinalReceipt();
   delete noTokens.output_tokens;
   assert.equal(validateGoalCheckReceipt(noTokens, checkExpected()).ok, false);
 
-  const noModel = goodCheckReceipt();
+  const noModel = goodFinalReceipt();
   delete noModel.model;
   assert.equal(validateGoalCheckReceipt(noModel, checkExpected()).ok, false);
 });
 
 test('validateGoalCheckReceipt accepts the user-attested variant only with a valid bound approval', () => {
   const userReceipt = {
-    goals_hash: 'sha256:gh',
-    head_sha: 'headabc',
-    base_diff_hash: 'sha256:diff',
-    verify_output_hash: 'sha256:vout',
-    clean: true,
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'x' },
-      G2: { verdict: 'partial', evidence: 'y' },
-    },
+    ...goodFinalReceipt(),
     attested_by: 'user',
     approval_receipt: {
       attested_by: 'user',
       purpose: 'goal_check',
       goals_hash: 'sha256:gh',
-      question: 'Attest these verdicts?',
+      question: 'Attest this verdict?',
       answer: 'yes',
       ts: '2026-07-01T00:00:00Z',
     },
-    ts: '2026-07-01T00:00:00Z',
   };
+  delete userReceipt.dispatch_id;
+  delete userReceipt.model;
+  delete userReceipt.output_tokens;
   const ok = validateGoalCheckReceipt(userReceipt, checkExpected());
   assert.equal(ok.ok, true, ok.error);
   assert.equal(ok.provenance_kind, 'user');
@@ -524,57 +365,6 @@ test('validateGoalCheckReceipt accepts the user-attested variant only with a val
   const noApproval = { ...userReceipt };
   delete noApproval.approval_receipt;
   assert.equal(validateGoalCheckReceipt(noApproval, checkExpected()).ok, false);
-});
-
-// --- GOAL-WAIVER TESTS ---
-
-function goodWaiver(overrides = {}) {
-  return {
-    goals_hash: 'sha256:gh',
-    head_sha: 'headabc',
-    base: 'main',
-    diff_hash: 'sha256:diff',
-    reasons: { G2: 'accepted as out of scope this run' },
-    approval: {
-      attested_by: 'user',
-      purpose: 'goal_waive',
-      goals_hash: 'sha256:gh',
-      question: 'Waive G2?',
-      answer: 'yes',
-      ts: '2026-07-01T00:00:00Z',
-    },
-    ...overrides,
-  };
-}
-
-function waiverExpected(overrides = {}) {
-  return { goalsHash: 'sha256:gh', headSha: 'headabc', base: 'main', diffHash: 'sha256:diff', goals: CHECK_GOALS, ...overrides };
-}
-
-test('validateGoalWaiver accepts a waiver bound to the full check tuple', () => {
-  const res = validateGoalWaiver(goodWaiver(), waiverExpected());
-  assert.equal(res.ok, true, res.error);
-  assert.equal(typeof res.normalized.key, 'string');
-});
-
-test('validateGoalWaiver rejects a stale/replayed waiver after a commit or amendment', () => {
-  assert.equal(validateGoalWaiver(goodWaiver(), waiverExpected({ headSha: 'head2' })).ok, false);
-  assert.equal(validateGoalWaiver(goodWaiver(), waiverExpected({ goalsHash: 'sha256:new' })).ok, false);
-  assert.equal(validateGoalWaiver(goodWaiver(), waiverExpected({ diffHash: 'sha256:diff2' })).ok, false);
-});
-
-test('validateGoalWaiver requires per-goal reasons and a valid user approval', () => {
-  assert.equal(validateGoalWaiver(goodWaiver({ reasons: {} }), waiverExpected()).ok, false);
-  assert.equal(validateGoalWaiver(goodWaiver({ reasons: { G2: '' } }), waiverExpected()).ok, false);
-  assert.equal(validateGoalWaiver(goodWaiver({ reasons: { GZ: 'unknown goal' } }), waiverExpected()).ok, false);
-
-  const noApproval = goodWaiver();
-  delete noApproval.approval;
-  assert.equal(validateGoalWaiver(noApproval, waiverExpected()).ok, false);
-});
-
-test('GOAL_VERDICTS enum is exactly achieved/partial/missed', () => {
-  assert.deepEqual([...GOAL_VERDICTS].sort(), ['achieved', 'missed', 'partial']);
 });
 
 // --- evidence is INSIDE goal identity (2026-08-05) ---
@@ -909,9 +699,10 @@ test('v1 parses with intent null and version 1', () => {
   assert.equal(parsed.goals.length, 3);
 });
 
-test('validateGoals rejects v2 with wrong goal count or empty why', () => {
-  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, false);
-  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, false);
+test('validateGoals: the goal-count rule is gone; an empty Intent field still refuses', () => {
+  // G blocks are neither required nor counted — one, two, six or none all validate.
+  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, true);
+  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, true);
   assert.equal(validateGoals(parseGoals(V2_EMPTY_WHY)).ok, false);
 });
 
@@ -939,12 +730,16 @@ test('v2 goals without signal/evidence still validate', () => {
   assert.equal(res.ok, true);
 });
 
-test('validateAmendment still rejects an illegal goal mutation when the intent also changed', () => {
+test('validateAmendment reports a changed Intent even when G content churns alongside it', () => {
+  // G-block mutation rules (tombstoning, renumbering) are retired; the intent change is
+  // still a real, reported change that re-arms the spec gate.
   const variant = V2_FIXTURE
     .replace('outcome: the outcome', 'outcome: a different outcome')
     .replace('## G2: second', '## G9: second');
   const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(variant));
-  assert.equal(res.ok, false);
+  assert.equal(res.ok, true);
+  assert.equal(res.changed, true);
+  assert.match(res.reason || '', /intent amended/);
 });
 
 // --- GOALS-LOAD GATE: interview exit + Assumptions coverage (task 14) ---
@@ -1109,78 +904,6 @@ test('validateGoalsLoadGate finds the interview_end in the replay and enforces b
   const good = validateGoalsLoadGate({ replay: { terminal: 'converged', events: [{ type: 'interview_end', reason: 'converged' }] }, specText: SPEC_WITH });
   assert.equal(good.ok, true, good.error);
   assert.deepEqual(good.assumed, []);
-});
-
-// --- FINAL ASSESSMENT RECEIPT (§6.2) ---
-
-const finalExpected = (over = {}) => ({
-  ...checkExpected(),
-  final: true,
-  deployBaseSha: 'deploybase1',
-  deployChainHash: 'sha256:chain',
-  liveCheckDigest: 'sha256:live',
-  ...over,
-});
-
-const goodFinalReceipt = (over = {}) => goodCheckReceipt({
-  deploy_base_sha: 'deploybase1',
-  deploy_chain_hash: 'sha256:chain',
-  live_check_digest: 'sha256:live',
-  intent_verdict: { verdict: 'met', evidence: 'the live check shows the deployed surface answering as intended' },
-  ...over,
-});
-
-test('validateGoalCheckReceipt accepts a final assessment and normalizes its deploy bindings', () => {
-  const r = validateGoalCheckReceipt(goodFinalReceipt(), finalExpected());
-  assert.equal(r.ok, true, r.error);
-  assert.equal(r.normalized.final, true);
-  assert.equal(r.normalized.deploy_base_sha, 'deploybase1');
-  assert.equal(r.normalized.deploy_chain_hash, 'sha256:chain');
-  assert.equal(r.normalized.live_check_digest, 'sha256:live');
-  assert.deepEqual(r.normalized.intent_verdict.verdict, 'met');
-  assert.deepEqual(INTENT_VERDICTS, ['met', 'partial', 'missed']);
-});
-
-test('a final receipt must echo each deploy binding the recorder bound', () => {
-  for (const k of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
-    const stale = validateGoalCheckReceipt(goodFinalReceipt({ [k]: 'OTHER' }), finalExpected());
-    assert.equal(stale.ok, false, `${k} mismatch must be refused`);
-    assert.match(stale.error, new RegExp(k));
-    const missing = goodFinalReceipt();
-    delete missing[k];
-    assert.equal(validateGoalCheckReceipt(missing, finalExpected()).ok, false, `${k} absent must be refused`);
-  }
-});
-
-test('a final check whose bindings the recorder never supplied is a wiring failure, not a pass', () => {
-  // Accepting the caller's own value here would let the assessor's claim validate itself.
-  for (const k of ['deployBaseSha', 'deployChainHash', 'liveCheckDigest']) {
-    const r = validateGoalCheckReceipt(goodFinalReceipt(), finalExpected({ [k]: undefined }));
-    assert.equal(r.ok, false);
-    assert.match(r.error, /unbound/);
-  }
-});
-
-test('the intent verdict is required on a final assessment and forbidden on an implementation one', () => {
-  const noVerdict = goodFinalReceipt();
-  delete noVerdict.intent_verdict;
-  assert.equal(validateGoalCheckReceipt(noVerdict, finalExpected()).ok, false);
-  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'achieved', evidence: 'x' } }), finalExpected()).ok, false, 'goal verdicts are not intent verdicts');
-  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'met', evidence: '  ' } }), finalExpected()).ok, false);
-  // An implementation assessment returning one is fabricating a post-live judgement.
-  const fabricated = validateGoalCheckReceipt(goodCheckReceipt({ intent_verdict: { verdict: 'met', evidence: 'x' } }), checkExpected());
-  assert.equal(fabricated.ok, false);
-  assert.match(fabricated.error, /only by the final assessment/);
-});
-
-test('the implementation-assessment and v1 receipt shapes are unchanged by the final path', () => {
-  const r = validateGoalCheckReceipt(goodCheckReceipt(), checkExpected());
-  assert.equal(r.ok, true, r.error);
-  assert.equal(r.normalized.final, undefined, 'no final keys leak onto an implementation receipt');
-  assert.equal(r.normalized.intent_verdict, undefined);
-  // A v1-shaped receipt (no deploy tuple, no intent verdict) still validates.
-  const v1 = goodCheckReceipt();
-  assert.equal(validateGoalCheckReceipt(v1, { ...checkExpected(), final: false }).ok, true);
 });
 
 test('an id must appear in a real Assumptions TABLE — prose and a second table do not count', () => {

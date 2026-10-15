@@ -412,7 +412,7 @@ const amendMd = [
   '', '### 2026-07-07 — trim verify', 'dropped a redundant check',
 ].join('\n');
 
-test('renderPlanHtml renders narrative, refs, amendments and goals offline', () => {
+test('renderPlanHtml renders narrative, refs and amendments offline (no goals block)', () => {
   const metaArg = {
     title: 'Rich plan',
     bundleDir: '/repo/docs/masterplan/self',
@@ -431,7 +431,9 @@ test('renderPlanHtml renders narrative, refs, amendments and goals offline', () 
   assert.ok(h.includes('widen scope') && h.includes('trim verify'), 'both amendment summaries present');
   assert.ok(h.includes('2026-07-06') && h.includes('2026-07-07'), 'amendment dates present');
   assert.ok(h.includes('added task 2 for the API layer'), 'amendment detail present');
-  assert.ok(/Goals/.test(h) && h.includes('G1') && h.includes('G2'), 'goals block present');
+  // The Goals section is retired with the goal-block machinery; an index carrying
+  // historical task.goals fields renders without one.
+  assert.ok(!/<section class="goals"/.test(h), 'no goals section rendered');
   assert.equal(h, renderPlanHtml(richIndex, metaArg), 'render is deterministic (offline)');
 });
 
@@ -513,59 +515,27 @@ test('parseAmendments extracts ordered timeline entries from the ## Amendments b
 });
 
 // ── goal tracking ────────────────────────────────────────────────────────────
-test('mergePlanFragments carries per-task goals through to the emitted index', () => {
+test('mergePlanFragments drops the historical per-task goals field from the emitted index', () => {
   const index = mergePlanFragments([
     frag('s', [
       task('a', { goals: ['G1', 'G2'] }),
       task('b', { files: ['b.js'] }),
     ]),
   ]);
-  assert.deepEqual(byDesc(index, 'a').goals, ['G1', 'G2']);
-  assert.deepEqual(byDesc(index, 'b').goals, []);
+  // Goal annotations are retired: fragments carrying them merge fine, but the emitted
+  // tasks carry no goals field.
+  assert.equal('goals' in byDesc(index, 'a'), false);
+  assert.equal('goals' in byDesc(index, 'b'), false);
 });
 
-test('validatePlanIndex flags an uncovered non-tombstoned goal', () => {
+test('validatePlanIndex ignores goal coverage (retired) — an old index with goals fields loads', () => {
   const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1'] })])]);
-  const errors = validatePlanIndex(index, [{ id: 'G1' }, { id: 'G2' }]);
-  assert.ok(errors.some((e) => e.includes('G2') && e.includes('covered')), 'G2 must be flagged as uncovered');
-  assert.ok(!errors.some((e) => e.includes('G1')), 'G1 must not be flagged');
-});
-
-test('validatePlanIndex flags a task citing an unknown goal', () => {
-  const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1', 'GX'] })])]);
-  const errors = validatePlanIndex(index, [{ id: 'G1' }]);
-  assert.ok(errors.some((e) => e.includes('GX') && e.includes('unknown')), 'GX must be flagged as unknown');
-});
-
-// The tombstone shape here comes from parseGoals, NOT from a literal. An earlier version
-// of this test hand-wrote `{ tombstone: true }` — a shape the parser never emits — so it
-// passed while validatePlanIndex's `g.tombstone !== true` check rejected every real
-// tombstoned bundle. Going through the parser is what makes the two sides unable to
-// diverge again.
-test('validatePlanIndex exempts a tombstoned goal from coverage (real parseGoals shape)', () => {
-  const { goals } = parseGoals(
-    'topic: t\n\n## G1: first\nsignal: test\n\n' +
-      '## G2: descoped\nsignal: test\ntombstone_reason: moved to stage 2\ntombstone_at: 2026-08-08T00:00:00Z\n',
-  );
-  assert.equal(typeof goals.find((g) => g.id === 'G2').tombstone, 'object',
-    'parseGoals must emit an object tombstone — if this changes, plan-merge must change with it');
-
-  const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1'] })])]);
-  const errors = validatePlanIndex(index, goals);
-  assert.ok(!errors.some((e) => e.includes('G2')), 'tombstoned G2 must not be flagged as uncovered');
-  assert.ok(!errors.some((e) => e.includes('G1')), 'covered G1 must not be flagged');
-
-  const index2 = mergePlanFragments([frag('s', [task('a', { goals: ['G1', 'G2'] })])]);
-  const errors2 = validatePlanIndex(index2, goals);
-  assert.ok(!errors2.some((e) => e.includes('unknown')), 'citing a tombstoned goal must not be an unknown-ref error');
-});
-
-test('validatePlanIndex with an empty goals list is a no-op (pre-feature bundles)', () => {
-  const index = mergePlanFragments([
-    frag('s', [task('a', { goals: ['G1'] }), task('b', { files: ['b.js'] })]),
-  ]);
+  index.tasks[0].goals = ['G1', 'GX'];
+  // Neither uncovered goals nor unknown citations are errors anymore; the field is
+  // ignored, and a malformed historical value is tolerated the same way.
   assert.deepEqual(validatePlanIndex(index), []);
-  assert.deepEqual(validatePlanIndex(index, []), []);
+  index.tasks[0].goals = 'not-even-an-array';
+  assert.deepEqual(validatePlanIndex(index), []);
 });
 
 // ---------------------------------------------------------------------------

@@ -192,9 +192,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, preCodeMaskGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
-import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
+import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
+import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, worktreePathFor, worktreeBranchFor, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
@@ -236,7 +236,7 @@ import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
-import { finishStep } from '../lib/finish-step.mjs';
+import { finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
@@ -282,11 +282,12 @@ function resolveGateArtifacts({ gate, statePath, state, flags, op }) {
   const spec = gateConfine(path.resolve(bundleDirReal, specRaw), bundleDirReal, 'spec.md');
   if (gate === 'spec') {
     const descriptors = [{ role: 'spec', ...spec }];
-    // Goals-tracking (plan-review finding 1 / spec §4): on a goals_enabled bundle the spec gate covers
-    // goals.md too, so the gate hash spans spec.md + goals.md — a later `mp goals-amend` (which rewrites
-    // goals.md) re-arms the spec gate exactly like a spec edit. Pre-feature bundles (no goals_enabled
-    // marker, no capability/goal events) keep the spec-only hash (back-compat). Appended AFTER spec so a
-    // non-goals bundle's hash is byte-identical to before.
+    // Run-Intent tracking (plan-review finding 1 / spec §4): on a goals_enabled bundle the spec gate
+    // covers goals.md too, so the gate hash spans spec.md + goals.md — a later sanctioned amendment
+    // (the promotion transaction, which rewrites goals.md) re-arms the spec gate exactly like a spec
+    // edit. Pre-feature bundles (no goals_enabled marker, no capability/goal events) keep the
+    // spec-only hash (back-compat). Appended AFTER spec so a non-goals bundle's hash is byte-identical
+    // to before.
     const goalsEvents = readBundleEventsForGoals(statePath, 'gate-review');
     if (bundleGoalsEnabled(state, goalsEvents)) {
       const goals = gateConfine(path.resolve(bundleDirReal, 'goals.md'), bundleDirReal, 'goals.md');
@@ -474,12 +475,15 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   process.exit(3);
 }
 
-// ---- goal-transition guards (goals-tracking): capture gate + split-brain hash guard --------------
+// ---- run-Intent transition guards: spec→plan capture + split-brain hash guard --------------
 //
-// A goals_enabled bundle must FREEZE its goals (goals-load -> goals_frozen event) before it leaves
-// brainstorm, and its on-disk goals.md must never silently diverge from the committed hash. Both guards
-// read the EVENT LOG (authority order: events > state) and are fs-only. Pre-feature bundles (no
-// goals_enabled marker AND no capability/goal events) are exempt — the guards no-op.
+// A goals_enabled bundle captures its run Intent (goals.md: topic anchor + ## Intent) when it
+// enters the plan phase — mechanically, no separate operator approval (the spec gate is where
+// the operator already approves the Intent: its hash spans spec.md + goals.md and its prompt
+// step presents the Intent). Its on-disk goals.md must never silently diverge from the committed
+// hash. Both guards read the EVENT LOG (authority order: events > state) and are fs-only.
+// Pre-feature bundles (no goals_enabled marker AND no capability/goal events) are exempt — the
+// guards no-op.
 function readBundleEventsForGoals(statePath, label) {
   const eventsPath = path.join(path.dirname(statePath), 'events.jsonl');
   let text = '';
@@ -515,7 +519,7 @@ function bundleGoalsEnabled(state, events) {
 }
 // §6.1 helper: the goals hash under the bundle's DURABLE format pin — the pin selects
 // the canonicalizer, and the goals gates compare against event hashes written by
-// goals-load/goals-amend under the SAME pin. A pin-less bundle (the legacy shape) keeps
+// goals-load (historically) and every goal amendment under the SAME pin. A pin-less bundle (the legacy shape) keeps
 // the unpinned hash, which IS its canonical one. The repair is §6.1's sanctioned one.
 function pinnedGoalsHash(statePath, goalsMd) {
   // One pin, every writer and guard: the same helper promote.mjs uses for lineage.
@@ -526,44 +530,113 @@ function pinnedGoalsHash(statePath, goalsMd) {
   }
 }
 
-// Part 1 — the goals_frozen CAPTURE gate (set-phase --phase=plan). On a goals_enabled bundle, refuse to
-// leave brainstorm until the goal set is frozen: emit an actionable run_goals_capture op and exit 3
-// (mirrors the fail-closed spec-gate pattern) whenever NO goals_frozen event exists yet. Pre-feature
-// bundles are exempt. This owns the PRE-CAPTURE window; the split-brain guard owns hash consistency
-// AFTER capture (PLAN-GATE FINDING). --force appends an audit event and bypasses.
-function enforceGoalsCaptureGate(statePath, state, flags) {
-  const events = readBundleEventsForGoals(statePath, 'goals-capture');
-  if (!bundleGoalsEnabled(state, events)) return; // pre-feature: exempt
-  if (flags.force) {
-    try {
-      appendEvent(statePath, {
-        type: 'goals_capture_bypassed',
-        ts: new Date().toISOString(),
-        data: { reason: 'force' },
-        summary: 'goals capture gate bypassed via --force',
-      });
-    } catch {
-      /* audit best-effort — never block a --force recovery on an events.jsonl write */
-    }
-    return;
+// Part 1 — the spec→plan INTENT CAPTURE seam (set-phase --phase=plan), split in two (L1):
+// VALIDATE (below) runs on EVERY attempt regardless of an existing freeze, and the APPEND
+// (Part 1b) runs only after every plan-entry check — (a) this document + interview
+// validation, (b) the split-brain guard, (c) the spec-review gate — has passed on THIS
+// attempt. (a) validates goals.md — the topic anchor and the ## Intent block must be present and the
+// Intent fields well-formed (the historical G blocks are neither required nor validated; a
+// document that still carries them hashes identically); (b) the interview-exit +
+// Assumptions-coverage gate (validateGoalsLoadGate — the same checks goals-load enforced,
+// with exactly its exemptions: a bundle whose interview never ran — a pre-interview legacy
+// bundle — proceeds with a stated skip, and a waived exit needs its durable
+// interview_waived event). A bundle already frozen at the same hash gets no second event
+// (the split-brain guard owns hash consistency from there). No operator approval receipt is
+// required at this step: the spec gate, whose hash covers goals.md, is where the operator
+// approves the Intent. `--force` does NOT bypass validation (it bypasses only the
+// spec-review gate): capture is mechanical document and ledger validation, not ceremony —
+// a missing Intent or an open interview is a data problem no force flag can fix.
+function validateRunIntentAtPlanEntry(statePath, state) {
+  const events = readBundleEventsForGoals(statePath, 'intent-capture');
+  if (!bundleGoalsEnabled(state, events)) return null; // pre-feature: exempt
+  const dir = path.dirname(statePath);
+  const goalsMdPath = path.join(dir, 'goals.md');
+  let goalsMd;
+  try {
+    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
+  } catch (e) {
+    die(
+      `set-phase: goals.md unreadable (${e.message}) — the run Intent (topic anchor + ## Intent block) ` +
+        'is captured when the run enters plan. Write goals.md first; the brainstorm steps produce it.',
+      1
+    );
   }
-  if (events.some((e) => e.type === 'goals_frozen')) return; // captured — split-brain guard owns the rest
-  const opObj = {
-    op: 'run_goals_capture',
-    gate: 'goals',
-    reason:
-      'goals are enabled but not yet frozen — capture the goal set before leaving brainstorm: ' +
-      '`mp goals-load --state=<bundle>/state.yml --goals=<goals.md> --approval=<receipt.json>`. ' +
-      '(--force bypasses; audited.)',
-  };
-  fs.writeSync(1, JSON.stringify(opObj) + '\n');
-  process.exit(3);
+  const parsed = parseGoals(goalsMd);
+  if (typeof parsed.topicSeed !== 'string' || parsed.topicSeed.trim() === '') {
+    die(
+      'set-phase: goals.md carries no `topic:` anchor — the run Intent begins with the verbatim ' +
+        'original request; a document without it cannot be captured. Restore the anchor.',
+      1
+    );
+  }
+  if (!parsed.intent) {
+    die(
+      'set-phase: goals.md carries no `## Intent` block — the run Intent is what the delivered work ' +
+        'is judged against, and the spec gate approves it. Write the Intent block (why / outcome / ' +
+        'anti_goals / done_means) before entering plan.',
+      1
+    );
+  }
+  const val = validateGoals(parsed);
+  if (!val.ok) die(`set-phase: invalid goals.md — ${val.error}`, 1);
+  // The interview-exit + Assumptions-coverage gate, keyed on the INTERVIEW LEDGER exactly as
+  // goals-load keyed it: an interview that was STARTED must exit properly (§5.4); a bundle
+  // where none ran (a pre-interview legacy bundle) proceeds with a stated skip. The spec text
+  // comes from the bundle's own spec.md (set-phase honors no path flags); an exhausted exit
+  // with no readable spec fails closed inside validateGoalsLoadGate.
+  {
+    let replay;
+    try {
+      replay = replayInterview(statePath);
+    } catch (e) {
+      die(`set-phase: cannot replay the interview ledger: ${e.message}`, 1);
+    }
+    const evs = replay.events ?? [];
+    const hasInterview = evs.some((e) => String(e?.type ?? '').startsWith('interview_'));
+    if (hasInterview) {
+      let specText = null;
+      const specPath = state && typeof state.spec_path === 'string' && state.spec_path
+        ? state.spec_path
+        : path.join(dir, 'spec.md');
+      try {
+        specText = fs.readFileSync(path.resolve(dir, specPath), 'utf8');
+      } catch {
+        specText = null; // validateGoalsLoadGate fails closed on an exhausted exit without a spec
+      }
+      const gate = validateGoalsLoadGate({ replay, specText });
+      if (!gate.ok) die(`set-phase: ${gate.code}: ${gate.error}`, 1);
+    } else {
+      // A bundle with NO interview ledger predates the interview (a v1 bundle); it has no
+      // exit to gate on. The skip is stated rather than silent, so it can never be mistaken
+      // for a gate that passed.
+      process.stderr.write('masterplan: set-phase: no interview ledger on this bundle — the §5.4 exit gate has no exit to judge; a deliberate skip is recorded with `mp interview waive --reason`\n');
+    }
+  }
+  // §6.1: the canonical hash under the bundle's DURABLE format pin — a schema_backed bundle
+  // whose versioned representation was stripped dies here (rejected downgrade), never hashed.
+  return pinnedGoalsHash(statePath, goalsMd);
+}
+
+// Part 1b — the freeze APPEND (L1): the ONLY idempotent step of the capture seam. It runs
+// after every plan-entry check has passed on THIS attempt (document + interview validation
+// above, then the split-brain guard and the spec-review gate in the set-phase caller), so a
+// failed attempt never leaves a freeze that masks the checks — and a bundle already frozen
+// gets no second event (the split-brain guard owns hash consistency from there).
+function appendRunIntentFreeze(statePath, hash) {
+  const events = readBundleEventsForGoals(statePath, 'intent-capture');
+  if (!hash || events.some((e) => e.type === 'goals_frozen')) return;
+  appendEvent(statePath, {
+    type: 'goals_frozen',
+    ts: new Date().toISOString(),
+    data: { goals_hash: hash, goals: [] },
+    summary: `run intent frozen at ${hash} (no goal blocks — new documents carry topic + Intent only)`,
+  });
 }
 // Part 2 — the SPLIT-BRAIN hash guard (set-phase + load-plan). Recompute goals.md's hash via lib/goals.mjs
 // and compare it to the committed hash from the event log; a mismatch means goals.md drifted out-of-band
 // from the last goals_frozen/goal_amended commit (a hand-edit / split brain). Exit non-zero with a
 // reconcile message. NO-OP when the bundle is pre-feature OR no goals_frozen/goal_amended event exists yet
-// (that window belongs to the capture gate — PLAN-GATE FINDING). --force is deliberately NOT honored: a
+// (that window belongs to the capture seam — PLAN-GATE FINDING). --force is deliberately NOT honored: a
 // split brain is a data-integrity error the operator must reconcile, not bypass.
 function enforceGoalsSplitBrainGuard(statePath, state, transition) {
   const events = readBundleEventsForGoals(statePath, 'goals-split-brain');
@@ -577,68 +650,21 @@ function enforceGoalsSplitBrainGuard(statePath, state, transition) {
   } catch (e) {
     die(
       `${transition}: goals.md unreadable (${e.message}) but the event log records a frozen goal set at ` +
-        `${committed} — reconcile the bundle (restore goals.md, or re-freeze via \`mp goals-amend\`) before advancing.`,
+        `${committed} — reconcile the bundle (restore goals.md, or record the change through an ` +
+        `approved promotion transaction) before advancing.`,
       1
     );
   }
   const actual = pinnedGoalsHash(statePath, goalsMd);
   if (actual !== committed) {
     die(
-      `${transition}: goals.md hash ${actual} does not match the committed goal set ${committed} from the ` +
+      `${transition}: goals.md hash ${actual} does not match the committed Intent hash ${committed} from the ` +
         `last goals_frozen/goal_amended event — goals.md drifted out-of-band (split brain). Reconcile before ` +
-        `advancing: record the change with \`mp goals-amend\` (sanctioned), or restore goals.md to the committed content.`,
+        `advancing: record the change through an approved promotion transaction (sanctioned), or restore ` +
+        `goals.md to the committed content.`,
       1
     );
   }
-}
-// Load the goal list for machine-checked plan coverage (§3.2). On a goals_enabled bundle, parse
-// goals.md, verify its hash matches the committed goal set from the event log, cross-check it against
-// the derived state.goals cache (lib/goals.mjs), and return the parsed goal list so validatePlanIndex
-// can enforce coverage centrally — uncovered/unknown goal refs then make the caller exit non-zero.
-// Pre-feature bundles (no state.yml / no goals_enabled marker) return [] so coverage is a no-op.
-// fs-only.
-function loadGoalsForCoverage(statePath, label) {
-  let state = null;
-  try {
-    if (fs.existsSync(statePath)) state = readState(statePath);
-  } catch (e) {
-    die(`${label}: state.yml unreadable: ${e.message}`, 1);
-  }
-  const events = readBundleEventsForGoals(statePath, label);
-  if (!bundleGoalsEnabled(state, events)) return []; // pre-feature: coverage is a no-op
-  const goalsMdPath = path.join(path.dirname(statePath), 'goals.md');
-  let goalsMd;
-  try {
-    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
-  } catch (e) {
-    die(
-      `${label}: goals are enabled but goals.md is unreadable (${e.message}) — freeze the goal set ` +
-        'with `mp goals-load` before validating the plan.',
-      1
-    );
-  }
-  const mdGoals = parseGoals(goalsMd).goals;
-  const committed = committedGoalsHash(events);
-  const actual = pinnedGoalsHash(statePath, goalsMd);
-  if (committed !== null && actual !== committed) {
-    die(
-      `${label}: goals.md hash ${actual} does not match the committed goal set ${committed} — reconcile ` +
-        'the split brain (`mp goals-amend`, or restore goals.md) before validating the plan.',
-      1
-    );
-  }
-  // Cross-check goals.md against the derived state.goals cache. When the hash matches the committed
-  // event set, goals.md IS that set, so it doubles as the event source for the three-way check.
-  const stateGoals = Array.isArray(state?.goals) ? state.goals : [];
-  const cc = crossCheckGoals(mdGoals, stateGoals, mdGoals);
-  if (!cc.ok) {
-    die(
-      `${label}: goals cross-check failed — ${cc.error} (state.goals cache diverged from goals.md; ` +
-        're-freeze via `mp goals-load` / `mp goals-amend`).',
-      1
-    );
-  }
-  return mdGoals;
 }
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
@@ -687,10 +713,10 @@ const KNOWN_FLAGS = new Set(
     'approval args autonomy base base-sha baseline before bootstrap branch branch-exists branches ' +
     'bytes-file choice codex-base codex-count codex-digest-file codex-done codex-reason codex-review ' +
     'codex-skipped codex-suppressed complexity complexity-source contract-ref count created-at ' +
-    'current-head cwd d6-ok data date dead declared-sha256 detail diff-hash digest-file direction ' +
-    'dirty disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
+    'current-head cwd d6-ok data date dead declared-sha256 detail digest-file direction ' +
+    'disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
     'fabric fail-if-unconfigured fail-if-unpublishable force fragments from gate generated-at gh-json ' +
-    'goal-check goals goals-choice head head-sha host id images integration-branch issue issues job-id ' +
+    'head host id images integration-branch issue issues job-id ' +
     'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
     'native-tools no-workflow note note-file now opened-at out owner-lock phase plan plan-deps plan-hash ' +
     'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
@@ -700,11 +726,11 @@ const KNOWN_FLAGS = new Set(
     'review-done review-fallback-reason review-json review-reason review-reviewer review-skipped review-verdict reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
-    'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
+    'verify-output verify-passed wave worktree worktree-list worktree-registered ' +
     'ws-baseline ' +
-    // §5.3 interview ledger + §6 goals-load gate + §7.5 rejection + the deploy/final-check flags
+    // §5.3 interview ledger + §7.5 rejection + the deploy/final-check flags
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
-    'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
+    'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file intent-choice intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
     'approval-file diff-file result-goals-file result-spec-file self transaction-id '  +
     'review-file round supersedes '  +
@@ -1685,6 +1711,19 @@ function main() {
       // seed; the shell records lifecycle milestones HERE, never via raw Write/Edit (CD-7 + anti-flood).
       const p = need(flags, 'state');
       const record = { type: need(flags, 'type'), ts: flags.ts ?? new Date().toISOString() };
+      // Reserved event types: `verify_passed` and `goal_check` carry machine-computed bindings
+      // (git facts, diff hashes, the current Intent hash) that the generic writer cannot compute.
+      // Their only producers are the finish machinery that validates those bindings against git
+      // and the run's records — accepting a hand-built one here would let a fabricated event stand
+      // in for the evidence it claims to be. Refused like an unknown flag (exit 2).
+      if (record.type === 'verify_passed' || record.type === 'goal_check') {
+        die(
+          `event: type '${record.type}' is reserved — it is appended only by the masterplan finish machinery ` +
+            `that computes and validates its bindings (branch facts, verify output, the current Intent ` +
+            `hash), never by the generic event writer.`,
+          2
+        );
+      }
       if (flags.phase !== undefined) record.phase = flags.phase;
       if (flags.note !== undefined) record.note = flags.note;
       // --note-file is the SHELL-SAFE transport for free-text the caller can't trust on a command line.
@@ -1722,366 +1761,36 @@ function main() {
       out({ event: record.type, ts: record.ts, path: eventsPath }); // terse confirmation
       break;
     }
-    case 'goals-load': {
-      // Freeze goals.md into the bundle: parse/validate via lib/goals.mjs, cache into state.goals,
-      // record the goals.md content hash, and append goals_frozen (the COMMIT point) carrying the
-      // user-approval receipt keyed to the exact goals hash. One-shot semantics: any prior goal
-      // LIFECYCLE event (goals_frozen/goal_amended/goal_check/goal_waived) — NOT the seed-time
-      // capability event — or a phase past capture (anything other than brainstorm) rejects, so a
-      // re-freeze can never launder a new goal set in. A re-run at the IDENTICAL goals hash is an
-      // idempotent roll-forward (crash-safe): re-materialize the derived artifacts/cache but NEVER
-      // double-append the commit event. Multi-file write ordering is artifacts-FIRST (goals.md
-      // temp+rename, then state.yml temp+rename via the single-writer writeState), event append LAST.
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      // --interview-waived routes through the interview's OWN waiver operation before anything
-      // is frozen: a waiver is a durable ledger event, not a flag this verb interprets itself.
-      if (flags['interview-waived'] === true || flags['interview-waived'] === 'true') {
-        try {
-          // The SAME config-resolved probing minimum as `mp interview waive` (review finding,
-          // wave 13): this route's cap-waiver cause must not depend on which verb entered it.
-          const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
-          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: resolveInstalledSkillRoot(flags, p) });
-        } catch (e) {
-          die(`goals-load: --interview-waived refused: ${e.message}`, 1);
-        }
-      }
-      // The §5.4 gate: goals load only from a permitted interview exit, and an `exhausted` exit
-      // owes an Assumptions row for every unresolved id its terminal event listed. The replay and
-      // the spec path are handed to the library so its error CODE is what surfaces —
-      // `assumed_row_missing` is raised exactly as lib/goals.mjs emits it, never re-worded here.
-      {
-        // The replay is produced UNCONDITIONALLY: a replay that cannot be read is a hard
-        // failure, never a reason to skip the gate. (Swallowing the error would make an
-        // unreadable ledger the easiest way past the check.)
-        let replay;
-        try {
-          replay = replayInterview(p);
-        } catch (e) {
-          die(`goals-load: cannot replay the interview ledger: ${e.message}`, 1);
-        }
-        // The gate is keyed on the INTERVIEW LEDGER, not on the bundle's capability record.
-        // Keying it on the capability marker was tried and is wrong: this repo carries an
-        // explicit contract — test/bin-masterplan.test.mjs, "the seed-time capability event
-        // does NOT block the first goals-load" — that a freshly seeded bundle may load goals.
-        // So the rule is: an interview that was STARTED must exit properly (§5.4); a bundle
-        // where none ran proceeds, and `--interview-waived` is the documented way to record
-        // that choice durably.
-        const evs = replay.events ?? [];
-        const hasInterview = evs.some((e) => String(e?.type ?? '').startsWith('interview_'));
-        if (hasInterview) {
-          let specText = null;
-          const specPath = flags['spec-path'] ?? null;
-          if (specPath) {
-            try { specText = fs.readFileSync(String(specPath), 'utf8'); } catch (e) {
-              die(`goals-load: --spec-path unreadable: ${e.message}`, 1);
-            }
-          }
-          const gate = validateGoalsLoadGate({ replay, specText });
-          if (!gate.ok) die(`goals-load: ${gate.code}: ${gate.error}`, 1);
-        } else {
-          // A bundle with NO interview ledger predates the interview (a v1 bundle); it has no
-          // exit to gate on. The skip is stated rather than silent, so it can never be mistaken
-          // for a gate that passed.
-          process.stderr.write('masterplan: goals-load: no interview ledger on this bundle — the §5.4 exit gate has no exit to judge; use --interview-waived --reason to record a deliberate skip\n');
-        }
-      }
-      const state = loadForWrite(p);
-      let goalsMd;
-      try {
-        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
-      } catch (e) {
-        die(`goals-load: --goals unreadable: ${e.message}`, 1);
-      }
-      const parsed = parseGoals(goalsMd);
-      const val = validateGoals(parsed);
-      if (!val.ok) die(`goals-load: invalid goals.md — ${val.error}`, 1);
-      const hash = pinnedGoalsHash(p, goalsMd);
-      let approval;
-      try {
-        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
-      } catch (e) {
-        die(`goals-load: --approval unreadable or not JSON: ${e.message}`, 1);
-      }
-      const ar = validateUserApprovalReceipt(approval, { goalsHash: hash, purpose: 'goal_load' });
-      if (!ar.ok) die(`goals-load: invalid approval receipt — ${ar.error}`, 1);
-      // Read events for the one-shot check (absent file == no events yet; any non-ENOENT read error
-      // fails loud rather than masquerading as an empty log).
-      const goalsEventsPath = path.join(dir, 'events.jsonl');
-      let goalsEventsText = '';
-      try {
-        goalsEventsText = fs.readFileSync(goalsEventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-load: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const goalEvents = goalsEventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      // PLAN-GATE FINDING: one-shot rejection counts only goal LIFECYCLE events; the seed-time
-      // capability event (bundle_created) does NOT block the first goals-load.
-      const priorFrozen = goalEvents.filter((e) => e.type === 'goals_frozen');
-      const otherGoalEvents = goalEvents.filter(
-        (e) => GOAL_LIFECYCLE_EVENT_TYPES.includes(e.type) && e.type !== 'goals_frozen'
-      );
-      if (otherGoalEvents.length) {
-        die(
-          `goals-load: rejected — a goal lifecycle event (${[...new Set(otherGoalEvents.map((e) => e.type))].join(', ')}) already exists; goals are past initial capture (use goals-amend for sanctioned changes)`,
-          1
-        );
-      }
-      if (priorFrozen.length) {
-        const priorHash = priorFrozen[priorFrozen.length - 1]?.data?.goals_hash;
-        if (priorHash === hash) {
-          // Idempotent roll-forward: a prior freeze already committed at THIS exact hash. A crash
-          // could have died between the artifact writes and the event append, or after — either way
-          // re-materialize the derived artifacts + cache to converge, but never re-append the event.
-          const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-          fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-          writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
-          out({ goals_load: 'idempotent', goals_hash: hash, goals: parsed.goals.length });
-          break;
-        }
-        die(
-          `goals-load: rejected — goals already frozen at a different hash (${priorHash}); a re-freeze would launder a new goal set (use goals-amend)`,
-          1
-        );
-      }
-      // One-shot phase gate: capture is the brainstorm->plan boundary; any phase other than
-      // brainstorm is past the capture window.
-      if (state.phase !== undefined && state.phase !== null && state.phase !== 'brainstorm') {
-        die(
-          `goals-load: rejected — phase is '${state.phase}', past the goal-capture window (brainstorm); goals can only be frozen before planning`,
-          1
-        );
-      }
-      // `topic: |` was already valid input before the block form existed (the old parser read `|`
-      // as ordinary seed text). A bundle frozen under that spelling would re-hash silently here,
-      // voiding every goal_check/goal_waived receipt keyed to the old hash. Detect and refuse.
-      const legacyHash = legacyGoalsHash(goalsMd);
-      if (legacyHash && state.goals_md_hash && state.goals_md_hash === legacyHash && legacyHash !== hash) {
-        die(`goals-load: refusing to re-hash — this bundle's goals.md uses \`topic: |\`, which an `
-          + `earlier masterplan parsed as the literal seed "|" (stored hash ${legacyHash}); the block `
-          + `form now reads it as a verbatim anchor (${hash}). Re-freezing would invalidate every `
-          + `receipt bound to the stored hash. Rewrite the topic in the bare \`topic: <text>\` form to `
-          + `keep the old hash, or re-approve the goals deliberately to adopt the new anchor.`, 1);
-      }
-      // The SAME hazard, one normalization change later: masking fenced/indented code and
-      // ending the Intent block at an H1 are corrections, but a goals.md that quotes
-      // parser-looking text parsed differently before them. Re-hashing it here would void every
-      // receipt keyed to the stored hash, silently.
-      const preMaskHash = preCodeMaskGoalsHash(goalsMd);
-      if (preMaskHash && state.goals_md_hash && state.goals_md_hash === preMaskHash && preMaskHash !== hash) {
-        die(`goals-load: refusing to re-hash — this bundle's goals.md quotes parser-looking text `
-          + `inside a code block (or carries Intent fields under an H1), which an earlier masterplan `
-          + `read as content (stored hash ${preMaskHash}); code is no longer read as content `
-          + `(${hash}). Re-freezing would invalidate every receipt bound to the stored hash. Move the `
-          + `example out of the Intent block to keep the old hash, or re-approve the goals `
-          + `deliberately to adopt the corrected parse.`, 1);
-      }
-      // ---- multi-file write: artifacts FIRST (each temp+rename), event append LAST as commit ----
-      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
-      const goalsFrozenRecord = {
-        type: 'goals_frozen',
-        ts: flags.ts ?? new Date().toISOString(),
-        data: { goals_hash: hash, approval: ar.normalized },
-        summary: `goals frozen (${parsed.goals.length} goals) at ${hash}`,
-      };
-      appendEvent(p, goalsFrozenRecord);
-      out({
-        goals_load: 'frozen',
-        goals_hash: hash,
-        goals: parsed.goals.length,
-        event: 'goals_frozen',
-        ts: goalsFrozenRecord.ts,
-      });
-      break;
-    }
-    case 'goals-amend': {
-      // The ONLY sanctioned mid-run goal change. Requires a FRESH user-approval receipt bound to BOTH
-      // the prior (old) goals hash AND the new goals hash (purpose 'goal_amend') — never autonomous.
-      // IDs stay stable (renumbering rejected via validateAmendment); a removed goal must arrive as a
-      // tombstone {reason, amended_at} (a bare deletion is rejected). Appends a goal_amended event
-      // recording old->new hash + reason plus the full old/new content (text+signal) of every changed
-      // goal (amendmentDiff). Because every goal_check receipt and goal_waived waiver is keyed to the
-      // goals hash, advancing the frozen hash structurally invalidates them all (their validators reject
-      // a receipt/waiver whose goals_hash no longer matches) — the event records how many it strands.
-      // Reuses the goals-load multi-file write ordering: artifacts (goals.md temp+rename) FIRST, state
-      // via the single-writer writeState, event append LAST as the commit point.
+    case 'record-intent-check': {
+      // CD-7 write (events.jsonl): record the FINAL Intent assessment — the post-deploy
+      // verdict on the run Intent (`goals.md`: topic anchor + ## Intent). Renamed from
+      // `record-goal-check --final` when the enumerated goal blocks were removed; the
+      // appended event keeps its historical wire name `goal_check` with `final: true`.
+      // Final mode ONLY: the implementation-mode goal assessment is gone.
+      //
+      // Anti-fabrication: the branch facts (HEAD, base..HEAD diff hash, verify output hash)
+      // are never accepted from the caller. They are read from the ledger's INDEPENDENTLY
+      // RECORDED binding source — the latest `verify_passed` (appended by finish-step with
+      // git facts computed from the worktree) or, on an in-flight legacy bundle, the latest
+      // non-final `goal_check` — and the receipt must echo THOSE. The Intent hash is
+      // recomputed from the bundle's goals.md under the durable format pin; the deploy tuple
+      // comes from the recorder's own flags and the digest of the --digest-file evidence.
+      // Provenance is EXACTLY ONE of assessor (dispatch_id/model/output_tokens) or
+      // user-attested (attested_by:'user' + approval_receipt) — a manual receipt is
+      // explicitly marked and can NEVER masquerade as assessor provenance (the validator
+      // owns that split). Re-entry at the unchanged tuple is idempotent (skip, no
+      // double-append); any Intent amendment moves the tuple and re-arms.
       const p = need(flags, 'state');
       const dir = path.dirname(p);
       const state = loadForWrite(p);
-      let goalsMd;
-      try {
-        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
-      } catch (e) {
-        die(`goals-amend: --goals unreadable: ${e.message}`, 1);
-      }
-      const reason = String(need(flags, 'reason')).trim();
-      if (!reason) die('goals-amend: --reason must be a non-empty amendment justification', 1);
-      const parsed = parseGoals(goalsMd);
-      const newHash = pinnedGoalsHash(p, goalsMd);
-      // Read events: an amendment requires an already-committed goal set (goals_frozen), and drives the
-      // idempotent roll-forward off the latest goal_amended (absent file == no events; a non-ENOENT read
-      // error fails loud rather than masquerading as an empty log).
-      const amendEventsPath = path.join(dir, 'events.jsonl');
-      let amendEventsText = '';
-      try {
-        amendEventsText = fs.readFileSync(amendEventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-amend: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const amendAllEvents = amendEventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const priorFrozenForAmend = amendAllEvents.filter((e) => e.type === 'goals_frozen');
-      if (!priorFrozenForAmend.length) {
-        die(
-          'goals-amend: rejected — no goals_frozen event exists; nothing to amend (use goals-load to freeze the initial goal set first)',
-          1
-        );
-      }
-      const amendEvents = amendAllEvents.filter((e) => e.type === 'goal_amended');
-      const lastAmend = amendEvents[amendEvents.length - 1];
-      // Idempotent roll-forward: the latest amendment already committed at THIS new hash (a crash could
-      // have died after the event append, or between the artifact writes and it). Re-materialize the
-      // derived artifacts + cache to converge, but NEVER double-append the event.
-      if (lastAmend && lastAmend.data && lastAmend.data.new_goals_hash === newHash) {
-        const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-        fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-        writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
-        out({ goals_amend: 'idempotent', new_goals_hash: newHash, goals: parsed.goals.length });
-        break;
-      }
-      // Old (currently committed) goal set + hash: state.goals is the derived cache, keyed by goals_md_hash.
-      const oldGoals = Array.isArray(state.goals) ? state.goals : [];
-      const oldHash =
-        state.goals_md_hash ??
-        (lastAmend ? lastAmend.data.new_goals_hash : priorFrozenForAmend[priorFrozenForAmend.length - 1].data.goals_hash);
-      // The ANCHOR: the topic seed of the currently-frozen goals.md — the original request this run
-      // is measured against (§3c). Read from disk because state.goals is the derived goal cache and
-      // carries no seed. The on-disk file is still the PRE-amendment one here (the idempotent branch
-      // above writes and breaks). Amendments may add or tombstone goals, never restate the ask; since
-      // every amendment from now on is checked against the current file, the seed cannot drift a step
-      // at a time. Pass the parsed DOCUMENTS so validateAmendment can see both seeds.
-      // FAIL CLOSED: a missing or unreadable goals.md means the anchor cannot be established, and
-      // `oldGoals` is a bare array carrying no seed to fall back on — so proceeding would skip the
-      // immutability check entirely and let an amendment recreate goals.md with a different ask.
-      // Silence there is exactly the hole this rule exists to close, so refuse instead.
-      let anchorSeed;
-      try {
-        anchorSeed = parseGoals(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8')).topicSeed;
-      } catch (e) {
-        die(`goals-amend: cannot read the frozen goals.md to establish the anchor (${e.message}). `
-          + 'The anchor is the original request this run is measured against; amending without it '
-          + 'would let the ask be silently restated. Restore goals.md and retry.', 1);
-      }
-      // Amendment structural rules: new doc valid, IDs stable (no renumbering), removals are tombstones.
-      const amv = validateAmendment(oldGoals, parsed, { anchorSeed });
-      if (!amv.ok) die(`goals-amend: invalid amendment — ${amv.error}`, 1);
-      if (newHash === oldHash) {
-        die('goals-amend: rejected — new goals are identical to the current goals (nothing to amend)', 1);
-      }
-      // Fresh user-approval receipt bound to BOTH the old and new hash (never autonomous).
-      let approval;
-      try {
-        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
-      } catch (e) {
-        die(`goals-amend: --approval unreadable or not JSON: ${e.message}`, 1);
-      }
-      const ar = validateUserApprovalReceipt(approval, { goalsHash: newHash, oldGoalsHash: oldHash, purpose: 'goal_amend' });
-      if (!ar.ok) die(`goals-amend: invalid approval receipt — ${ar.error}`, 1);
-      const changes = amendmentDiff(oldGoals, parsed.goals);
-      // Count the receipts/waivers this amendment strands: all are hash-keyed, so advancing the goals
-      // hash invalidates every goal_check / goal_waived recorded against the OLD hash.
-      const invalidated = amendAllEvents.filter(
-        (e) =>
-          (e.type === 'goal_check' || e.type === 'goal_waived') &&
-          (e.data?.goals_hash === oldHash ||
-            e.data?.receipt?.goals_hash === oldHash ||
-            e.data?.waiver?.goals_hash === oldHash)
-      ).length;
-      // ---- multi-file write: artifacts FIRST (temp+rename), event append LAST as the commit ----
-      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
-      const goalAmendedRecord = {
-        type: 'goal_amended',
-        ts: flags.ts ?? new Date().toISOString(),
-        data: {
-          old_goals_hash: oldHash,
-          new_goals_hash: newHash,
-          goals_hash: newHash,
-          reason,
-          changes,
-          invalidated_receipts: invalidated,
-          approval: ar.normalized,
-        },
-        summary: `goals amended (${changes.length} changed) ${oldHash} -> ${newHash}: ${reason}`,
-      };
-      appendEvent(p, goalAmendedRecord);
-      out({
-        goals_amend: 'amended',
-        old_goals_hash: oldHash,
-        new_goals_hash: newHash,
-        changes: changes.length,
-        invalidated_receipts: invalidated,
-        event: 'goal_amended',
-        ts: goalAmendedRecord.ts,
-      });
-      break;
-    }
-    case 'record-goal-check': {
-      // CD-7 write (events.jsonl): record an anti-fabrication goal-completeness assessment (mirrors
-      // record-gate-review). bin is fs-only — git facts (HEAD, base, base..HEAD diff hash, dirty status,
-      // the recomputed run_verify output hash) are PASSED IN by the shell. Two sub-modes:
-      //   default (check): --receipt validates via validateGoalCheckReceipt against the CURRENT goals
-      //     hash + the passed HEAD/base/diff/verify-output tuple + clean status; appends a `goal_check`
-      //     event. Provenance is EXACTLY ONE of assessor (dispatch_id/model/output_tokens) or
-      //     user-attested (attested_by:'user' + approval_receipt) — a manual receipt is explicitly
-      //     marked and can NEVER masquerade as assessor provenance (the validator owns that split).
-      //   --waive (waiver): --waiver validates via validateGoalWaiver (per-goal reasons + a user-
-      //     approval receipt binding the full tuple); appends a `goal_waived` event.
-      // REFUSES on a dirty worktree — the assessor saw uncommitted state a receipt key cannot pin.
-      // Re-entry at the UNCHANGED tuple (goals hash + HEAD + base + diff hash) is idempotent (skip, no
-      // double-append); any goals amendment or later commit moves the tuple and re-arms.
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      const state = loadForWrite(p);
-      // Goals from the bundle (same source the split-brain guard uses).
+      // The run-Intent artifact from the bundle (same source the split-brain guard uses).
       const goalsMdPath = path.join(dir, 'goals.md');
       let goalsMd;
       try {
         goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
       } catch (e) {
-        die(`record-goal-check: goals.md unreadable (${e.message}) — freeze the goal set with \`mp goals-load\` first`, 1);
+        die(`record-intent-check: goals.md (the run-Intent artifact) unreadable (${e.message}) — there is no Intent to assess`, 1);
       }
-      const gcParsed = parseGoals(goalsMd);
       // §6.1: goals.md hashes under the bundle's DURABLE format pin — a schema-backed
       // bundle's canonical goals_hash is the pinned one, and hashing unpinned here
       // would demand the assessor echo a hash no other checkpoint computes (the
@@ -2089,35 +1798,23 @@ function main() {
       // under the pin; the recorder is the same seam, not an exception).
       const gcPin = resolveFormatPin(p);
       if (!gcPin.pin) {
-        die(`record-goal-check: ${gcPin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : gcPin.error}`, 1);
+        die(`record-intent-check: ${gcPin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : gcPin.error}`, 1);
       }
       if (gcPin.pin === 'schema_backed') {
         try {
           repairFormatPin(p); // idempotent §6.1 repair: a capture event with no recorded pin refuses to parse as legacy
         } catch (e) {
-          die(`record-goal-check: the durable format pin could not be repaired from the capture history (${e.message})`, 1);
+          die(`record-intent-check: the durable format pin could not be repaired from the capture history (${e.message})`, 1);
         }
       }
       const gcHash = goalsHash(goalsMd, { formatPin: gcPin.pin });
-      // Git facts passed in by the shell (bin is fs-only).
-      const gcHead = String(need(flags, 'head-sha'));
-      const gcBase = String(need(flags, 'base'));
-      const gcDiffHash = String(need(flags, 'diff-hash'));
-      // REFUSE on a dirty worktree — a receipt key can't pin uncommitted state.
-      const gcDirty = flags.dirty === true || flags.dirty === 'true';
-      if (gcDirty) {
-        die(
-          'record-goal-check: refusing — the worktree is dirty; the assessor saw uncommitted state a receipt tuple cannot pin. Commit or stash, then re-run the goal check.',
-          3
-        );
-      }
       // Read the event log (absent == none; a non-ENOENT read error fails loud, never masquerades as empty).
       const gcEventsPath = path.join(dir, 'events.jsonl');
       let gcEventsText = '';
       try {
         gcEventsText = fs.readFileSync(gcEventsPath, 'utf8');
       } catch (e) {
-        if (e.code !== 'ENOENT') die(`record-goal-check: events.jsonl unreadable: ${e.message}`, 1);
+        if (e.code !== 'ENOENT') die(`record-intent-check: events.jsonl unreadable: ${e.message}`, 1);
       }
       const gcEvents = gcEventsText
         .split('\n')
@@ -2130,7 +1827,51 @@ function main() {
           }
         })
         .filter(Boolean);
-      // Helper: read a --receipt / --waiver value that is either inline JSON (starts with '{') or a path.
+      // The binding source: the independently recorded branch facts the receipt must echo,
+      // selected FOR THE FINISH HEAD (resolveFinishHead: the retired branch_tip once a
+      // branch_finish/branch_finish_intent record exists — which it always does by the time
+      // the final assessment runs, the deploy stage following retirement — else the current
+      // worktree/branch HEAD). Never "latest regardless of HEAD": a run that verified at A,
+      // moved to B and returned to A retires at A, and its receipt must bind to A's event.
+      // With neither a verify_passed nor a legacy implementation goal_check for that HEAD
+      // there is nothing independent to bind against, and accepting caller-supplied facts in
+      // their place would let the receipt validate its own branch bindings.
+      const finishHead = resolveFinishHead(gcEvents, () => {
+        try {
+          const mainRoot = path.dirname(runGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+          const wtBranch = worktreeBranchFor(typeof state.slug === 'string' && state.slug ? state.slug : 'run');
+          return runGit(mainRoot, ['rev-parse', '--verify', `refs/heads/${wtBranch}`]);
+        } catch (e) {
+          die(`record-intent-check: the finish HEAD could not be resolved (no branch_finish/branch_finish_intent record carries a branch_tip, and the bundle's worktree branch ref is unreadable: ${e.message})`, 1);
+        }
+      });
+      if (!finishHead) {
+        die('record-intent-check: the finish HEAD could not be resolved (no branch_finish/branch_finish_intent record carries a branch_tip, and no worktree HEAD was available)', 1);
+      }
+      const binding = branchBindingSource(gcEvents, finishHead);
+      if (!binding) {
+        die(
+          `record-intent-check: refusing — the ledger has no verify_passed (or legacy implementation goal_check) bound to the finish head ${finishHead} (the retired branch_tip) to bind the final assessment against; run the finish verification first (\`mp finish-step --state=… --verify-passed --verify-output=<file>\`)`,
+          1
+        );
+      }
+      const gcHead = String(binding.data.head_sha);
+      const gcBase = typeof binding.data.base === 'string' ? binding.data.base : null;
+      // A binding source with no base (an undetectable base branch) carries no diff hash — the
+      // receipt then owes only a non-empty string, never an echo of `null`.
+      const gcDiffRaw = binding.data.base_diff_hash ?? binding.data.diff_hash;
+      const gcDiffHash = typeof gcDiffRaw === 'string' ? gcDiffRaw : undefined;
+      // finish-bindings-2: the receipt's verify_output_hash must EQUAL the selected binding's —
+      // never an unconstrained receipt-supplied value. A verify_passed binding always carries a
+      // CLI-computed hash (an event without one is an incomplete binding, refused here); a
+      // legacy implementation goal_check keeps the hash it recorded (absent there, the receipt
+      // owes only a non-empty string, exactly as before).
+      const gcVoh = bindingVerifyOutputHash(binding);
+      if (!gcVoh.ok) {
+        die(`record-intent-check: ${gcVoh.error}`, 1);
+      }
+      const gcVerifyHash = gcVoh.hash;
+      // Helper: read a --receipt value that is either inline JSON (starts with '{') or a path.
       const readReceiptArg = (raw, label) => {
         let text;
         if (String(raw).trimStart().startsWith('{')) {
@@ -2139,150 +1880,78 @@ function main() {
           try {
             text = fs.readFileSync(String(raw), 'utf8');
           } catch (e) {
-            die(`record-goal-check: ${label} file unreadable: ${e.message}`, 1);
+            die(`record-intent-check: ${label} file unreadable: ${e.message}`, 1);
           }
         }
         try {
           return JSON.parse(text);
         } catch (e) {
-          die(`record-goal-check: ${label} is not valid JSON (${e.message})`, 1);
+          die(`record-intent-check: ${label} is not valid JSON (${e.message})`, 1);
         }
       };
-
-      // ---- WAIVER mode -------------------------------------------------------------------------
-      const gcWaive = flags.waive === true || flags.waive === 'true' || flags.waiver !== undefined;
-      if (gcWaive) {
-        const waiver = readReceiptArg(need(flags, 'waiver'), '--waiver');
-        const wv = validateGoalWaiver(waiver, {
-          goalsHash: gcHash,
-          headSha: gcHead,
-          base: gcBase,
-          diffHash: gcDiffHash,
-          goals: gcParsed.goals,
-        });
-        if (!wv.ok) die(`record-goal-check: waiver rejected — ${wv.error}`, 1);
-        // IDEMPOTENCY IS EVIDENCE-BOUND: a repeat waiver for the same tuple with the SAME
-        // reasons is a no-op, but a waiver carrying DIFFERENT reasons is a distinct
-        // attestation and must be recorded, not silently dropped (adversarial review,
-        // fresh-eyes-remediation finish flow).
-        const waivedAlready = gcEvents.some(
-          (e) =>
-            e.type === 'goal_waived' &&
-            e.data?.goals_hash === gcHash &&
-            e.data?.head_sha === gcHead &&
-            e.data?.base === gcBase &&
-            e.data?.diff_hash === gcDiffHash &&
-            JSON.stringify(e.data?.reasons ?? null) === JSON.stringify(wv.normalized.reasons ?? null)
-        );
-        if (waivedAlready) {
-          out({ record_goal_check: 'idempotent', mode: 'waive', goals_hash: gcHash, key: wv.normalized.key });
-          break;
-        }
-        const waivedRecord = {
-          type: 'goal_waived',
-          ts: flags.ts ?? new Date().toISOString(),
-          data: {
-            goals_hash: gcHash,
-            head_sha: gcHead,
-            base: gcBase,
-            diff_hash: gcDiffHash,
-            reasons: wv.normalized.reasons,
-            approval: waiver.approval,
-            key: wv.normalized.key,
-          },
-          summary: `goals waived (${Object.keys(wv.normalized.reasons).length}) at ${gcHash}`,
-        };
-        try {
-          appendEvent(p, waivedRecord);
-        } catch (e) {
-          die(e.message, 1);
-        }
-        out({
-          recorded: 'goal_waived',
-          mode: 'waive',
-          goals_hash: gcHash,
-          head_sha: gcHead,
-          waived: Object.keys(wv.normalized.reasons).length,
-          ts: waivedRecord.ts,
-        });
-        break;
-      }
-
-      // ---- CHECK mode --------------------------------------------------------------------------
-      const gcVerifyHash =
-        flags['verify-output-hash'] !== undefined ? String(flags['verify-output-hash']) : undefined;
       const receipt = readReceiptArg(need(flags, 'receipt'), '--receipt');
-      // --final marks the §6.2 FINAL assessment: the one that runs after the live check and
-      // answers the intent question. Its extra bindings come from the RECORDER (the flags the
-      // finish passes), never from the receipt itself — a receipt that supplied its own
-      // deploy base would be validating its own claim.
-      const gcFinal = flags.final === true || flags.final === 'true';
       const v = validateGoalCheckReceipt(receipt, {
         goalsHash: gcHash,
         headSha: gcHead,
         baseDiffHash: gcDiffHash,
         verifyOutputHash: gcVerifyHash,
         clean: true,
-        goals: gcParsed.goals,
-        ...(gcFinal ? {
-          final: true,
-          deployBaseSha: need(flags, 'base-sha'),
-          deployChainHash: need(flags, 'deploy-chain-hash'),
-          liveCheckDigest: liveCheckDigest(String(need(flags, 'digest-file'))),
-        } : {}),
+        final: true,
+        deployBaseSha: need(flags, 'base-sha'),
+        deployChainHash: need(flags, 'deploy-chain-hash'),
+        liveCheckDigest: liveCheckDigest(String(need(flags, 'digest-file'))),
       });
-      if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
+      if (!v.ok) die(`record-intent-check: receipt rejected — ${v.error}`, 1);
       // The finish checkpoint's identity binding (§5.5, task 56): a FINAL assessment is
       // evidence about the run state it judged under, and the receipt must name that
       // state itself — `intent_identity` echoed verbatim from the brief, plus resolvable
       // assessor provenance. The binding is judged HERE, at record time, against the
-      // bundle's CURRENT identity: a receipt naming a foreign tuple (an amended goal set,
+      // bundle's CURRENT identity: a receipt naming a foreign tuple (an amended Intent,
       // a drifted reconciliation, a replaced skill) is refused before it ever reaches the
       // ledger, and a replayed receipt is re-validated by the same rule at selection.
-      // The implementation check (no --final) binds the task-review-style identity at
-      // its own checkpoint and stays out of scope here (task 56's finish surface).
-      if (gcFinal) {
-        const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
-        if (!finishIdentity.ok) {
-          die(`record-goal-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
-        }
-        // The FULL finish tuple, composed from the recorder's OWN deploy members (the
-        // same flags the sibling validator demanded the receipt echo): the checkpoint
-        // judges the receipt against the whole binding it will write, never a
-        // half-composed one.
-        const gcLiveDigest = liveCheckDigest(String(need(flags, 'digest-file')));
-        const iv = verifyCheckpointEvidence({
-          checkpoint: 'finish',
-          receipt,
-          current: { ok: true, family: finishIdentity.family, identity: finishIdentity.intent_identity },
-          finishTuple: { ok: true, tuple: {
-            deploy_base_sha: String(need(flags, 'base-sha')),
-            deploy_chain_hash: String(need(flags, 'deploy-chain-hash')),
-            live_check_digest: gcLiveDigest,
-          } },
-          goalsArtifactDigest: finishIdentity.goals_artifact_digest,
-        });
-        if (!iv.ok) {
-          die(`record-goal-check: final receipt refused at the finish checkpoint — [${iv.status}] ${iv.reason}`, 1);
-        }
-        // The verified identity binding is WRITTEN beside the deploy members, so a later
-        // replay surface (finalReceiptFor) re-validates the same binding it judged.
-        v.normalized.intent_identity = iv.normalized?.intent_identity
-          ?? (finishIdentity.family === 'legacy'
-            ? { legacy: true, goals_hash: gcHash }
-            : finishIdentity.intent_identity);
+      const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
+      if (!finishIdentity.ok) {
+        die(`record-intent-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
       }
+      // The FULL finish tuple, composed from the recorder's OWN deploy members (the
+      // same flags the sibling validator demanded the receipt echo): the checkpoint
+      // judges the receipt against the whole binding it will write, never a
+      // half-composed one.
+      const gcLiveDigest = liveCheckDigest(String(need(flags, 'digest-file')));
+      const iv = verifyCheckpointEvidence({
+        checkpoint: 'finish',
+        receipt,
+        current: { ok: true, family: finishIdentity.family, identity: finishIdentity.intent_identity },
+        finishTuple: { ok: true, tuple: {
+          deploy_base_sha: String(need(flags, 'base-sha')),
+          deploy_chain_hash: String(need(flags, 'deploy-chain-hash')),
+          live_check_digest: gcLiveDigest,
+        } },
+        goalsArtifactDigest: finishIdentity.goals_artifact_digest,
+      });
+      if (!iv.ok) {
+        die(`record-intent-check: final receipt refused at the finish checkpoint — [${iv.status}] ${iv.reason}`, 1);
+      }
+      // The verified identity binding is WRITTEN beside the deploy members, so a later
+      // replay surface (finalReceiptFor) re-validates the same binding it judged.
+      v.normalized.intent_identity = iv.normalized?.intent_identity
+        ?? (finishIdentity.family === 'legacy'
+          ? { legacy: true, goals_hash: gcHash }
+          : finishIdentity.intent_identity);
+      const gcDeployBase = String(need(flags, 'base-sha'));
+      const gcChainHash = String(need(flags, 'deploy-chain-hash'));
       const checkedAlready = gcEvents.some(
         (e) =>
           e.type === 'goal_check' &&
-          (e.data?.final === true) === gcFinal &&
+          e.data?.final === true &&
           e.data?.goals_hash === gcHash &&
           e.data?.head_sha === gcHead &&
-          e.data?.base === gcBase &&
-          e.data?.diff_hash === gcDiffHash
+          e.data?.deploy_base_sha === gcDeployBase &&
+          e.data?.deploy_chain_hash === gcChainHash &&
+          e.data?.live_check_digest === gcLiveDigest
       );
       if (checkedAlready) {
-        out({ record_goal_check: 'idempotent', mode: 'check', goals_hash: gcHash, head_sha: gcHead });
+        out({ record_intent_check: 'idempotent', mode: 'final', goals_hash: gcHash, head_sha: gcHead });
         break;
       }
       // Provenance is recorded explicitly by kind — a manual (user-attested) receipt is NEVER stored as
@@ -2300,6 +1969,7 @@ function main() {
         type: 'goal_check',
         ts: flags.ts ?? new Date().toISOString(),
         data: {
+          final: true,
           goals_hash: gcHash,
           head_sha: gcHead,
           base: gcBase,
@@ -2308,30 +1978,22 @@ function main() {
           verify_output_hash: v.normalized.verify_output_hash,
           clean: true,
           provenance_kind: v.provenance_kind,
-          verdicts: v.normalized.verdicts,
           provenance,
           // §6.2 FINAL-assessment bindings: the validator normalized them (and demanded the
-          // receipt echo them), but they must also be WRITTEN or the machine's finalReceiptFor
-          // can never find a valid final assessment — an implementation-only event has
-          // final !== true, so a `--final` check recorded on the same tuple would be
-          // indistinguishable from the implementation check that preceded it.
-          ...(gcFinal
-            ? {
-                final: true,
-                deploy_base_sha: v.normalized.deploy_base_sha,
-                deploy_chain_hash: v.normalized.deploy_chain_hash,
-                live_check_digest: v.normalized.live_check_digest,
-                intent_verdict: v.normalized.intent_verdict,
-                // The §5.5 identity binding, as verified at record time: the tuple the
-                // assessment judged under, written so the replay surfaces re-validate the
-                // same binding (a receipt the recorder refused never reaches the ledger).
-                ...(v.normalized.intent_identity !== undefined
-                  ? { intent_identity: v.normalized.intent_identity }
-                  : {}),
-              }
+          // receipt echo them), and they are WRITTEN so the machine's finalReceiptFor can find
+          // a valid final assessment bound to this deployment.
+          deploy_base_sha: v.normalized.deploy_base_sha,
+          deploy_chain_hash: v.normalized.deploy_chain_hash,
+          live_check_digest: v.normalized.live_check_digest,
+          intent_verdict: v.normalized.intent_verdict,
+          // The §5.5 identity binding, as verified at record time: the tuple the
+          // assessment judged under, written so the replay surfaces re-validate the
+          // same binding (a receipt the recorder refused never reaches the ledger).
+          ...(v.normalized.intent_identity !== undefined
+            ? { intent_identity: v.normalized.intent_identity }
             : {}),
         },
-        summary: `goal check recorded (${v.provenance_kind}) at ${gcHash}`,
+        summary: `final intent check recorded (${v.provenance_kind}) at ${gcHash}`,
       };
       try {
         appendEvent(p, checkRecord);
@@ -2340,7 +2002,7 @@ function main() {
       }
       out({
         recorded: 'goal_check',
-        mode: 'check',
+        mode: 'final',
         provenance_kind: v.provenance_kind,
         goals_hash: gcHash,
         head_sha: gcHead,
@@ -2471,80 +2133,6 @@ function main() {
       break;
     }
 
-    case 'goals-status': {
-      // Anti-forgetting mid-run: derive the CURRENT goal set from goals.md + events (NOT the possibly
-      // stale state.goals cache), surfacing tombstones and the frozen/amended hash lineage. Read-only —
-      // appends no event, writes no state. The current committed hash is the latest goal_amended's
-      // new_goals_hash, else the first goals_frozen's goals_hash; hash_ok flags whether goals.md on disk
-      // still matches that committed hash (a drift detector for a hand-edited or out-of-band goals.md).
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      readState(p); // validate the bundle is readable/parseable (read-only; result intentionally unused)
-      const eventsPath = path.join(dir, 'events.jsonl');
-      let eventsText = '';
-      try {
-        eventsText = fs.readFileSync(eventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-status: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const allEvents = eventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const frozenEvents = allEvents.filter((e) => e.type === 'goals_frozen');
-      const amendEvents = allEvents.filter((e) => e.type === 'goal_amended');
-      if (!frozenEvents.length) {
-        out({ goals_status: 'unfrozen', frozen: false, amendments: 0, active: 0, tombstoned: 0, goals: [] });
-        break;
-      }
-      const frozenHash = frozenEvents[0].data?.goals_hash ?? null;
-      const lastAmend = amendEvents[amendEvents.length - 1];
-      const currentHash = lastAmend ? lastAmend.data?.new_goals_hash ?? null : frozenHash;
-      // Derive goals from goals.md on disk (the artifact), never state.goals — that is the whole point.
-      let goalsMdText = '';
-      let goalsMdPresent = true;
-      try {
-        goalsMdText = fs.readFileSync(path.join(dir, 'goals.md'), 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-status: goals.md unreadable: ${e.message}`, 1);
-        goalsMdPresent = false;
-      }
-      const parsed = parseGoals(goalsMdText);
-      const computedHash = goalsMdPresent ? pinnedGoalsHash(p, goalsMdText) : null;
-      const hashOk = goalsMdPresent && computedHash === currentHash;
-      const goals = parsed.goals.map((g) => ({
-        id: g.id,
-        text: g.text,
-        signal: g.signal,
-        tombstoned: !!g.tombstone,
-        ...(g.tombstone
-          ? { tombstone_reason: g.tombstone.reason ?? null, tombstone_at: g.tombstone.amended_at ?? null }
-          : {}),
-      }));
-      const active = goals.filter((g) => !g.tombstoned).length;
-      const tombstoned = goals.filter((g) => g.tombstoned).length;
-      out({
-        goals_status: amendEvents.length ? 'amended' : 'frozen',
-        frozen: true,
-        frozen_hash: frozenHash,
-        current_hash: currentHash,
-        amendments: amendEvents.length,
-        goals_md_present: goalsMdPresent,
-        goals_md_hash: computedHash,
-        hash_ok: hashOk,
-        active,
-        tombstoned,
-        goals,
-      });
-      break;
-    }
     case 'migrate-bundle': {
       const p = need(flags, 'state');
       const text = readText(p);
@@ -2789,7 +2377,7 @@ function main() {
       let renderOk = true;
       try {
         // Commit: plan.md (tmp+rename, atomic) FIRST, then the plan_amended event append LAST as the
-        // commit point (mirrors the goals-amend artifact-then-event ordering).
+        // commit point (mirrors the promotion transaction's artifact-then-event ordering).
         const planMdTmp = planMdPath + '.tmp';
         fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
         fs.renameSync(planMdTmp, planMdPath);
@@ -3226,13 +2814,18 @@ function main() {
       }
       // §spec/plan gate enforcement: --phase=plan is the brainstorm→plan (SPEC) advance; --phase=execute
       // is the alt plan→execute (PLAN) path (load-plan is the normal one, gated identically below — H3
-      // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses.
-      // Goal-transition guards run BEFORE the spec/plan review gate so goals.md is present + consistent
-      // when the (goals-enabled) spec gate hashes it. --phase=plan is the brainstorm->plan capture seam.
+      // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses
+      // the gate review ONLY. L1 ordering on --phase=plan: the run-Intent VALIDATION (Intent
+      // validity, interview exit, Assumptions coverage — every attempt, an existing freeze never
+      // masks it), then the split-brain guard, then the spec-review gate, and only then the
+      // goals_frozen APPEND — so a failed attempt (gate refused, interview reopened, drifted or
+      // invalid document) never leaves a freeze behind, and --force bypasses none of the checks
+      // except the gate review itself.
       if (phase === 'plan') {
-        enforceGoalsCaptureGate(p, state, flags); // exits 3 (run_goals_capture) if goals unfrozen
-        enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // no-ops pre-capture; dies on goals.md drift
-        enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
+        const intentHash = validateRunIntentAtPlanEntry(p, state); // L1: every attempt, freeze or not
+        enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // dies on goals.md drift from the committed hash
+        enforceGateReview('spec', p, flags, state, { op: 'set-phase' }); // --force bypasses ONLY this
+        appendRunIntentFreeze(p, intentHash); // idempotent at the same hash — after every check passed
       }
       if (phase === 'execute') {
         enforceGoalsSplitBrainGuard(p, state, 'set-phase');
@@ -3323,8 +2916,7 @@ function main() {
       } catch (e) {
         die(`merge-plan-fragments: ${e.message}`, 1);
       }
-      const mergeGoals = loadGoalsForCoverage(path.join(path.dirname(outIndex), 'state.yml'), 'merge-plan-fragments');
-      const errors = validatePlanIndex(index, mergeGoals);
+      const errors = validatePlanIndex(index);
       if (errors.length) {
         die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
       }
@@ -3352,8 +2944,7 @@ function main() {
       } catch (e) {
         die(`validate-plan-index: ${p} is not valid JSON (${e.message})`, 1);
       }
-      const validateGoals_ = loadGoalsForCoverage(path.join(path.dirname(p), 'state.yml'), 'validate-plan-index');
-      const errors = validatePlanIndex(index, validateGoals_);
+      const errors = validatePlanIndex(index);
       if (errors.length) {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
@@ -4813,12 +4404,24 @@ function main() {
       if (reviewFallbackReasonFlag !== undefined && reviewFallbackReasonFlag !== null && typeof reviewFallbackReasonFlag !== 'string') {
         die(`--review-fallback-reason must be a string, got ${JSON.stringify(reviewFallbackReasonFlag)}`);
       }
-      // A1 (2026-08-30): the goal-gate answer flags — the finish-step engine's documented vocabulary.
-      // --goal-check=<failed> signals assessor dispatch failed (fail-closed → manual goals_unmet gate);
-      // --goals-choice=<fix|waiver|abort> answers the goals_unmet gate AUQ. Both thread into finishStep's
-      // ctx (goalCheck / goalsChoice); the engine validates goalsChoice against GOALS_CHOICES.
-      const goalCheckFlag = typeof flags['goal-check'] === 'string' ? flags['goal-check'] : null;
-      const goalsChoiceFlag = typeof flags['goals-choice'] === 'string' ? flags['goals-choice'] : null;
+      // The final-gate answer flags — the finish-step engine's documented vocabulary.
+      // --intent-choice=<waiver|abort> answers the intent_unmet gate AUQ (the final Intent
+      // assessment returned partial|missed on a live deployment); it threads into finishStep's
+      // ctx (intentChoice), where the engine validates it against INTENT_CHOICES.
+      // --verify-output=<file> is the run_verify answer's output transport: the CLI-side file
+      // whose hash lands on the mechanical verify_passed event (git facts are computed by the
+      // engine from the worktree, never accepted from flags).
+      const intentChoiceFlag = typeof flags['intent-choice'] === 'string' ? flags['intent-choice'] : null;
+      const verifyOutputFlag = typeof flags['verify-output'] === 'string' && flags['verify-output'].trim()
+        ? flags['verify-output'].trim() : null;
+      // finish-bindings-2: EVERY pass answer — the normal run_verify pass AND each reviewed
+      // override on verification_failed / no_verification_command — carries its evidence
+      // file. The CLI hashes the file into the binding's verify_output_hash, so a pass answer
+      // without one is refused before the engine runs (exit 2): there is no pass without
+      // output evidence to hash.
+      if (verify === 'pass' && verifyOutputFlag === null) {
+        die('--verify-passed requires --verify-output=<file> — write the verification output (or, for a reviewed override, the failing output / the operator\'s recorded override answer) to a file and pass its path; its hash lands on the durable verify_passed binding');
+      }
       let op;
       try {
         op = finishStep({
@@ -4847,8 +4450,8 @@ function main() {
           publicationHead: typeof flags['publication-head'] === 'string' ? flags['publication-head'] : null,
           removalForce: !!flags['removal-force'],
           retroOnly: !!flags['retro-only'],
-          goalCheck: goalCheckFlag,
-          goalsChoice: goalsChoiceFlag,
+          intentChoice: intentChoiceFlag,
+          verifyOutputFile: verifyOutputFlag,
           // §7.3 the no_definition_of_done gate's `adhoc` answer: --done-adhoc-file=<path> supplies
           // a JSON ad-hoc done definition (the engine's doneAdhocFile parameter — it deploys, so it
           // is bound by the release/identity contract like any other definition). rejectUnknownFlags

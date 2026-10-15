@@ -160,9 +160,7 @@ to an empty string when its data is absent, so an old minimal index still render
 4. **Task table** — one `<section class="wave">` per wave, each with an optional
    `assets/wave-<n>.png` illustration then a table whose columns are
    #, Status (badge), Task, Files, Verify, Codex, Spec refs.
-5. **Goals** (`goalsBlock`) — the distinct goal ids cited across all tasks, de-duped and
-   sorted for determinism; omitted when no task cites a goal.
-6. **Amendments timeline** (`amendmentsBlock`) — the parsed `## Amendments` history rendered
+5. **Amendments timeline** (`amendmentsBlock`) — the parsed `## Amendments` history rendered
    as an ordered `<ol class="timeline">` (below).
 
 ### The inline wave SVG (a node layout, not a dependency graph)

@@ -57,7 +57,7 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 24 check modules
+## The 23 check modules
 
 | Module | Purpose |
 |---|---|
@@ -65,7 +65,6 @@ unit-testable without touching the real host. The main CLI passes
 | `routing-policy-health` | Host-scoped probe of the routing policy masterplan resolves work against: the repo copy `policy/workflow-map.json` is readable and structurally complete, every required class resolves (adversary → breaker role on the frontier lane, the adversarial panel cross-vendor), and host-artifact drift from the live generated `~/.pi/workflows/workflow-map.json`. `WARN`-only (review is advisory) — never `ERROR`. |
 | `coord-drift` | For GitHub-coordinated runs (bundles with a `coordination` object in `state.yml`): pure-filesystem drift detection between durable plan state and the published GitHub projection — done tasks whose `issue_map` entry is still open/claimed, orphan claims (claimed with no PR), `issue_map` vs `state.tasks` task-ID drift, and `published_waves` mismatches. No `gh`/network calls. `SKIP` when no bundle is coordinated. |
 | `dangling-run` | Flags non-archived bundles that look abandoned (stale activity / no progress) so operators can sweep or finish them. Advisory `WARN`; `SKIP` when nothing applies. |
-| `goals` | Goals-enabled bundles: frozen goals hash consistency, missing goals.md, and related goal-state integrity. `SKIP` when no goals-enabled bundles. |
 | `index-staleness` | For each bundle with a `plan.md`, computes a sha256 and compares it against the recorded hash in `plan.index.json` (and, for migrated-in-place bundles, `state.plan_hash`). `WARN` on mismatch; `SKIP` when no bundle has a plan. |
 | `legacy-bundle` | Warns on any bundle with `schema_version < 6` (not yet migrated to v8) and on any actual planning artifacts remaining under `docs/superpowers/`. `SKIP` only when no bundles exist and `docs/superpowers/` is absent. |
 | `owner-sentinel` | Guard D hygiene: scans `docs/masterplan/<slug>/.owner.lock` + `.owner.hb.*` heartbeats; `WARN` on a corrupt lock (unparseable), a stale lock (no heartbeat within TTL — recommends `release-owner --force` when no live session holds it), or orphan heartbeat files with no lock. Fresh locks emit nothing; `SKIP` when no bundles exist. |

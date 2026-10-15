@@ -720,7 +720,10 @@ async function buildFixture(entry, spec, tag) {
     });
     fs.writeFileSync(path.join(bundleDir, 'retro.md'), '# retro\n');
     try {
-      const op = finishStep({ statePath, now: 2000, verify: 'pass', host: 'codex', discoveryOptions: {
+      // finish-bindings-2: a pass answer carries its evidence file (hashed by the engine).
+      const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+      fs.writeFileSync(knobVerifyOut, 'suite green\n');
+      const op = finishStep({ statePath, now: 2000, verify: 'pass', verifyOutputFile: knobVerifyOut, host: 'codex', discoveryOptions: {
         env: {}, homeDir: '/fixture-absent', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); },
       } });
       assert.equal(op.op, 'run_adversary_review');
@@ -749,7 +752,13 @@ async function buildFixture(entry, spec, tag) {
     fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
       tasks: [{ id: 1, verify_commands: ['true'] }],
     }));
-    const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+    // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+    // for the verification output the real sequencer writes before re-invoking.
+    const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+    fs.writeFileSync(knobVerifyOut, 'suite green\n');
+    const step = (extra = {}) => finishStep({ statePath, now: 2000,
+      ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: knobVerifyOut } : {}),
+      ...extra });
     let op;
     try { op = step(); } catch (error) {
       if (!/model arrays retired/.test(error.message)) throw error;
@@ -889,9 +898,9 @@ async function buildFixture(entry, spec, tag) {
   }
 
   if (entry.id === 'goals_enabled') {
-    // The REAL goals-capability consumer: on a goals_enabled bundle the finish/goals machinery
-    // refuses to proceed without a readable goals.md + frozen goals; a pre-feature bundle is
-    // exempt. Drive the real binary's goals-load gate on a seeded state with/without the
+    // The REAL goals-capability consumer: on a goals_enabled bundle the capture seam at
+    // set-phase --phase=plan refuses to proceed without a readable goals.md; a pre-feature
+    // bundle is exempt. Drive set-phase --phase=plan --force on a seeded state with/without the
     // marker and observe the refusal difference.
     const dir = tmpdir('mp-knob-goals-');
     const bundleDir = path.join(dir, 'bundle');
@@ -900,13 +909,12 @@ async function buildFixture(entry, spec, tag) {
     const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const on = need.goals_enabled === true;
     writeState(statePath, {
-      schema_version: 8, slug: 'knob', status: 'in-progress', phase: 'plan',
+      schema_version: 8, slug: 'knob', status: 'in-progress', phase: 'brainstorm',
       pending_gate: null, active_run: null, concurrency: { owner_lock: 'off' },
-      ...(on ? { goals_enabled: true, goals: [] } : {}),
+      ...(on ? { goals_enabled: true } : {}),
     });
-    // goals-load on a goals_enabled bundle with no goals.md and no approval must be refused
-    // (freeze gate); on a pre-feature bundle it is a no-op / allowed.
-    const r = run(['goals-load', `--state=${statePath}`], { env: mpEnv() });
+    fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+    const r = run(['set-phase', `--state=${statePath}`, '--phase=plan', '--force'], { env: mpEnv() });
     return { goalsGate: on ? (r.status === 0 ? 'proceed' : 'refused') : (r.status === 0 ? 'proceed' : 'exempt') };
   }
 
@@ -1110,7 +1118,13 @@ async function walkAutonomy({ statePath, MAIN, WT, bundleDir, slug, autonomy }) 
       verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
     },
   });
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+  fs.writeFileSync(knobVerifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({ statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: knobVerifyOut } : {}),
+    ...extra });
   let op = step({ verify: 'pass' });
   if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
   let guard = 0;

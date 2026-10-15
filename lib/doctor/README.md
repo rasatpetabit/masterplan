@@ -57,7 +57,6 @@ CI rather than silently drifting. `v7 ID` is the ported v7 check id, where appli
 | `plugin-registry-drift` | #50 | WARN | User-scoped: installed masterplan plugin version vs marketplace-cached version mismatch. Detection only. |
 | `coord-drift` | — | WARN | Coordination-state drift for GitHub-coordinated run bundles. |
 | `dangling-run` | — | WARN | Non-archived dangling run bundles: past the staleness threshold, or a stale in-progress bundle still holding an owner-lock. |
-| `goals` | — | ERROR | Goals-enabled bundles have consistent goal state: a frozen hash matching the current `goals.md`, and (archived) a valid `goal_check` receipt or covering waivers. |
 | `incomplete-archive` | — | WARN | Archived bundles whose completion class is `incomplete:<reason>` or `merged` are reported; a valid `incomplete_authorized` ledger record is required for each. |
 | `legacy-archive` | — | WARN | Pre-v10 archives with no completion field report `legacy` rather than being misread as complete; only legacy-grade archives pass. |
 | `no-definition-of-done` | — | WARN | Repo-local `.masterplan.yaml` with no `done:` definition (or `done: none`) is reported at archive time, since the deploy contract cannot be satisfied. |

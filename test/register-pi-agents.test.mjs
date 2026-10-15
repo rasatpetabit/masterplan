@@ -554,7 +554,7 @@ jointTest('all eight registered aliases preserve their custom contracts through 
     const operations = {
       'mp-adversarial-reviewer': 'adversarial-assessment',
       'mp-alignment-auditor': 'claim-assessment',
-      'mp-goal-assessor': 'claim-assessment',
+      'mp-intent-assessor': 'claim-assessment',
       'mp-intent-critic': 'adversarial-assessment',
       'mp-plan-reviewer': 'adversarial-assessment',
       'mp-planner': 'plan', 'mp-spec-decomposer': 'plan', 'mp-subsystem-planner': 'plan',

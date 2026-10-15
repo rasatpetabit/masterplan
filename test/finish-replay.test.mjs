@@ -98,7 +98,15 @@ function makeFixture({ slug = 't25', done, autonomy = 'loose', origin = false } 
   });
   const self = buildOwnerIdentity({ host: 'h1', session: 'sess-A', slug, now: 1000 });
   assert.equal(acquireOwner(bundleDir, self, { now: 1000 }).outcome, 'acquire');
-  const step = (extra = {}) => finishStep({ statePath, self, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, self, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
+  });
   return { tmp, MAIN, WT, bundleDir, statePath, self, step, slug, bare, origin };
 }
 

@@ -50,6 +50,13 @@ function makeBundle(complexity = 'medium', phase = 'brainstorm', extra = {}) {
   return { dir, statePath };
 }
 
+// The raw interview_end event (replayLedger projects a trimmed 'end' shape without
+// payload_sha256 — the B1 assertions read the durable fields the ledger drops).
+function loadRawEnd(statePath) {
+  const lines = fs.readFileSync(path.join(path.dirname(statePath), 'events.jsonl'), 'utf8').split('\n').filter(Boolean);
+  return lines.map((l) => JSON.parse(l)).filter((e) => e.type === 'interview_end').pop();
+}
+
 test('cap refusal at low', (t) => {
   const { dir, statePath } = makeBundle('low');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -274,15 +281,51 @@ test('critic payload copied and digest recorded', (t) => {
   assert.equal(criticEvent.payload_sha256, expectedSha);
 });
 
-test('high complexity requires critic before next intent round', (t) => {
+test('high complexity: intent rounds open freely with no intervening critic receipt (closing critic)', (t) => {
   const { dir, statePath } = makeBundle('high');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Closing-critic cadence: the per-round guard is gone. Three completed intent rounds
+  // (the third opened by a design question) accumulate with drafts recorded between them
+  // and NO critic receipt anywhere — every ask succeeds.
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
   answerQuestion({ statePath, id: 'Q1', text: 'a1' });
-  assert.throws(
-    () => askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' }),
-    /critic receipt/
-  );
+  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' });
+  answerQuestion({ statePath, id: 'Q2', text: 'a2' });
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+  askQuestion({ statePath, id: 'Q3', round: 3, kind: 'design', text: 'pick?' });
+  askQuestion({ statePath, id: 'Q4', round: 3, kind: 'intent', text: 'q4' });
+  answerQuestion({ statePath, id: 'Q3', text: 'A' });
+  answerQuestion({ statePath, id: 'Q4', text: 'a4' });
+  const r = replayInterview(statePath);
+  assert.equal(r.criticReceipts.length, 0);
+  assert.equal(r.completedIntentRounds, 3);
+  assert.equal(r.terminal, null, 'the interview is still open — no receipt was demanded');
+});
+
+test('high complexity: several rounds converge with ONE closing receipt bound to the latest draft', (t) => {
+  const { dir, statePath } = makeBundle('high');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Four completed intent rounds (the legacy high minimum), no receipts between them,
+  // then ONE closing receipt on the settled draft — converged accepts, still requiring
+  // a CURRENT, clean receipt: an old receipt never counts for a revised draft.
+  const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+  for (let round = 1; round <= 4; round += 1) {
+    askQuestion({ statePath, id: `Q${(round - 1) * 2 + 1}`, round, kind: 'intent', text: `q${round}a` });
+    askQuestion({ statePath, id: `Q${(round - 1) * 2 + 2}`, round, kind: 'intent', text: `q${round}b` });
+    answerQuestion({ statePath, id: `Q${(round - 1) * 2 + 1}`, text: 'a' });
+    answerQuestion({ statePath, id: `Q${(round - 1) * 2 + 2}`, text: 'a' });
+  }
+  askQuestion({ statePath, id: 'Q9', round: 5, kind: 'design', text: 'pick?' });
+  answerQuestion({ statePath, id: 'Q9', text: 'A' });
+  recordDraft({ statePath, intent });
+  const status = interviewStatus(statePath);
+  const payloadPath = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify({ unknowns: [], contradictions: [], misclassified: [] }));
+  recordCritic({ statePath, receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) }, payloadPath });
+  endInterview({ statePath, reason: 'converged' });
+  assert.equal(replayInterview(statePath).terminal, 'converged');
+  // The ONE receipt is the whole critic evidence: no per-round count is consulted.
+  assert.equal(replayInterview(statePath).criticReceipts.length, 1);
 });
 
 test('resume from disk', (t) => {
@@ -449,13 +492,15 @@ test('a successful critic receipt restores availability after two failures', (t)
   assert.throws(() => endInterview({ statePath, reason: 'exhausted', criticUnavailableAck: 'continue' }), /exhausted requires/);
 });
 
-test('high complexity: a design question opening the next round does not bypass the critic cadence', (t) => {
+test('a design question opening the next round at high complexity needs no critic receipt either', (t) => {
   const { dir, statePath } = makeBundle('high');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
   answerQuestion({ statePath, id: 'Q1', text: 'a1' });
   askQuestion({ statePath, id: 'Q2', round: 2, kind: 'design', text: 'q2' });
-  assert.throws(() => askQuestion({ statePath, id: 'Q3', round: 2, kind: 'intent', text: 'q3' }), /critic receipt/);
+  askQuestion({ statePath, id: 'Q3', round: 2, kind: 'intent', text: 'q3' });
+  // No critic receipt recorded — both asks succeed under the closing-critic cadence.
+  assert.equal(replayInterview(statePath).criticReceipts.length, 0);
 });
 
 test('a critic receipt is refused when intent content changed after the latest draft', (t) => {
@@ -473,7 +518,6 @@ test('a critic receipt is refused when intent content changed after the latest d
   answerQuestion({ statePath, id: 'Q2', text: 'a2' });
   const s2 = interviewStatus(statePath);
   assert.throws(() => recordCritic({ statePath, receipt: { dispatch_id: 'd2', model: 'm', output_tokens: 10, content_head: s2.content_head, intent_sha256: intentSha(intent) }, payloadPath }), /latest draft is not the current/);
-  assert.throws(() => askQuestion({ statePath, id: 'Q3', round: 3, kind: 'intent', text: 'q3' }), /critic receipt/);
 });
 
 test('critic unavailability does not carry over to newer intent content', (t) => {
@@ -534,6 +578,85 @@ test('reopen is refused while the interview is neither ended nor waived', (t) =>
   waiveInterview({ statePath, reason: 'user' });
   reopenInterview({ statePath, reason: 'continue' });
   assert.throws(() => reopenInterview({ statePath, reason: 'again' }), /not ended or waived/);
+});
+
+test('legacy exhausted at the cap is refused at medium/high without the closing critic pass (B1)', (t) => {
+  // The B1 reproduction: with the per-round guard removed, a legacy medium/high interview
+  // could end 'exhausted' at the question cap with zero critic receipts, zero attempts and
+  // no acknowledgement. The closing pass is now REQUIRED on the cap ground.
+  for (const complexity of ['medium', 'high']) {
+    const { dir, statePath } = makeBundle(complexity);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const cap = BUDGETS[complexity].cap;
+    for (let i = 1; i <= cap; i += 1) {
+      askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+      answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+    }
+    recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+    const r = replayInterview(statePath);
+    assert.equal(r.asked, cap);
+    assert.equal(r.criticReceipts.length, 0);
+    assert.equal(r.unavailability.length, 0);
+    assert.throws(
+      () => endInterview({ statePath, reason: 'exhausted' }),
+      /closing critic pass/,
+      `${complexity}: the cap alone no longer ends the interview`,
+    );
+    assert.equal(replayInterview(statePath).terminal, null, `${complexity}: the interview stays open`);
+  }
+});
+
+test('legacy exhausted at the cap accepts ONE closing receipt with an UNCLEAN payload and records its unresolved items (B1)', (t) => {
+  const { dir, statePath } = makeBundle('medium');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cap = BUDGETS.medium.cap;
+  for (let i = 1; i <= cap; i += 1) {
+    askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+    answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+  }
+  const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+  recordDraft({ statePath, intent });
+  // The ONE closing pass, with findings still open — exhausted retains them (Assumptions table).
+  const status = interviewStatus(statePath);
+  const payload = {
+    unknowns: [{ id: 'U1', question: 'which outcome?', why_it_changes_design: 'sets the target', options: ['A', 'B'] }],
+    contradictions: [{ id: 'C1', question_ids: ['Q1', 'Q2'], note: 'the answers disagree' }],
+    misclassified: [],
+  };
+  const payloadPath = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify(payload));
+  recordCritic({
+    statePath,
+    receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) },
+    payloadPath,
+  });
+  endInterview({ statePath, reason: 'exhausted' });
+  const end = replayLedger(statePath).filter((e) => e.type === 'end').pop();
+  assert.equal(end.reason, 'exhausted');
+  assert.equal(end.attempts, 1, 'the one closing pass is the whole critic evidence');
+  assert.deepEqual(end.unknowns, payload.unknowns, 'the unresolved unknowns are retained');
+  assert.deepEqual(end.contradictions, payload.contradictions, 'the unresolved contradictions are retained');
+  const raw = loadRawEnd(statePath);
+  assert.ok(raw.payload_sha256, 'the payload is digest-bound');
+  assert.equal(interviewStatus(statePath).state, 'exhausted');
+});
+
+test('legacy exhausted on the acknowledged-unavailable ground still needs no closing receipt (B1 unchanged)', (t) => {
+  // At the cap AND unavailable-with-ack: the ack ground permits ending — the closing-pass
+  // requirement applies to the cap ground alone.
+  const { dir, statePath } = makeBundle('medium');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cap = BUDGETS.medium.cap;
+  for (let i = 1; i <= cap; i += 1) {
+    askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+    answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+  }
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+  recordCriticUnavailable({ statePath, error: 'e1' });
+  recordCriticUnavailable({ statePath, error: 'e2' });
+  acknowledgeCriticUnavailable({ statePath, answer: 'continue' });
+  endInterview({ statePath, reason: 'exhausted' });
+  assert.equal(interviewStatus(statePath).state, 'exhausted');
 });
 
 test('a durable critic-unavailable acknowledgement authorizes exhausted on replay alone', (t) => {
@@ -605,24 +728,51 @@ test('malformed answers, questions and drafts are refused before they reach the 
   assert.equal(replayLedger(statePath).filter((e) => e.type === 'draft').length, 1);
 });
 
-test('a tampered critic artifact no longer satisfies the per-round critic requirement', (t) => {
-  const { dir, statePath } = makeBundle('high');
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
-  answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+test('converged at high refuses a stale, tampered or non-clean closing receipt', (t) => {
+  // The closing receipt is the ONLY critic evidence, so its currency, integrity and
+  // cleanliness are the whole convergence bar (KEEP UNCHANGED checks).
   const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
-  recordDraft({ statePath, intent });
-  const status = interviewStatus(statePath);
-  const payloadPath = path.join(dir, 'payload.json');
-  fs.writeFileSync(payloadPath, JSON.stringify({ unknowns: [], contradictions: [], misclassified: [] }));
-  recordCritic({ statePath, receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) }, payloadPath });
-  const bundleDir = path.dirname(statePath);
-  const artifact = fs.readdirSync(bundleDir).find((f) => f.startsWith('interview-critic-') && f.endsWith('.json'));
-  assert.ok(artifact, 'critic artifact copied into the bundle');
-  fs.writeFileSync(path.join(bundleDir, artifact), '{"unknowns":[],"contradictions":[],"misclassified":[],"edited":true}');
-  assert.throws(() => askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' }), /critic/);
-  fs.rmSync(path.join(bundleDir, artifact));
-  assert.throws(() => askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' }), /critic/);
+  const build = (sp) => {
+    for (let round = 1; round <= 4; round += 1) {
+      askQuestion({ statePath: sp, id: `Q${(round - 1) * 2 + 1}`, round, kind: 'intent', text: `q${round}a` });
+      askQuestion({ statePath: sp, id: `Q${(round - 1) * 2 + 2}`, round, kind: 'intent', text: `q${round}b` });
+      answerQuestion({ statePath: sp, id: `Q${(round - 1) * 2 + 1}`, text: 'a' });
+      answerQuestion({ statePath: sp, id: `Q${(round - 1) * 2 + 2}`, text: 'a' });
+    }
+    askQuestion({ statePath: sp, id: 'Q9', round: 5, kind: 'design', text: 'pick?' });
+    answerQuestion({ statePath: sp, id: 'Q9', text: 'A' });
+    recordDraft({ statePath: sp, intent });
+  };
+  const recordOne = (sp, d, payload) => {
+    const status = interviewStatus(sp);
+    const payloadPath = path.join(d, `payload-${Math.random().toString(36).slice(2, 8)}.json`);
+    fs.writeFileSync(payloadPath, JSON.stringify(payload));
+    recordCritic({ statePath: sp, receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) }, payloadPath });
+  };
+  const clean = { unknowns: [], contradictions: [], misclassified: [] };
+
+  // STALE: the draft was revised after the receipt — the old receipt never counts.
+  const s1 = makeBundle('high');
+  t.after(() => fs.rmSync(s1.dir, { recursive: true, force: true }));
+  build(s1.statePath);
+  recordOne(s1.statePath, s1.dir, clean);
+  recordDraft({ statePath: s1.statePath, intent: { ...intent, why: 'w2' } });
+  assert.throws(() => endInterview({ statePath: s1.statePath, reason: 'converged' }), /requires a critic receipt matching the latest draft|requires a fresh critic receipt/);
+
+  // TAMPERED: the receipt artifact's bytes no longer match its recorded digest.
+  const s2 = makeBundle('high');
+  t.after(() => fs.rmSync(s2.dir, { recursive: true, force: true }));
+  build(s2.statePath);
+  recordOne(s2.statePath, s2.dir, clean);
+  fs.writeFileSync(path.join(s2.dir, 'interview-critic-1.json'), '{"unknowns":[],"contradictions":[],"misclassified":[],"edited":true}');
+  assert.throws(() => endInterview({ statePath: s2.statePath, reason: 'converged' }), /critic payload/);
+
+  // NOT CLEAN: a substantive finding (an unknown) keeps the interview open.
+  const s3 = makeBundle('high');
+  t.after(() => fs.rmSync(s3.dir, { recursive: true, force: true }));
+  build(s3.statePath);
+  recordOne(s3.statePath, s3.dir, { unknowns: [{ id: 'U1', question: 'which outcome?', why_it_changes_design: 'sets the target', options: ['A', 'B'] }], contradictions: [], misclassified: [] });
+  assert.throws(() => endInterview({ statePath: s3.statePath, reason: 'converged' }), /requires a clean critic payload/);
 });
 
 test('design-pick supersession is independent of answer order', (t) => {

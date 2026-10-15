@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.1.0] — 2026-10-15
+
+### Removed
+- Enumerated, separately-approved `## G<n>:` goal blocks and their entire lifecycle:
+  goal-count/signal/evidence validation at capture, per-goal plan coverage, task `goals` annotations,
+  the per-wave goal list reminder, goal-specific doctor checks (`lib/doctor/goals.mjs`),
+  and goal tables in status and retro output.
+- Subcommands `mp goals-load`, `mp goals-amend`, `mp goals-status`, and their CLI flags
+  (`--goals=`, `--interview-waived`).
+- Implementation-mode goal assessment: `run_goal_check` finish op, implementation-mode `goals_unmet` gate,
+  per-goal waivers (`goal_waived`), and the `--goal-check` flag.
+- Separate operator approval step for the run Intent artifact: capture is now mechanical at `set-phase --phase=plan`.
+  The operator approves Intent at the spec gate, whose hash coverage already includes `goals.md`.
+- Extra `approval.goals_amend` receipt requirement on new promotion transactions (`approval_contract: 2`).
+
+### Changed
+- Intent-interview critic cadence loosened to a closing pass (operator decision 2026-10-15): the critic is off at low
+  and runs ONE closing `mp-intent-critic` pass at medium/high once the interview draft has settled. Recording a draft
+  (`mp interview draft`) no longer mandates a critic dispatch; intent rounds open freely without intervening receipts;
+  the high-complexity per-intent-round ask guard and the `converged` per-round receipt count are removed; a further
+  critic pass runs only to address a substantive problem the closing assessment found. `mp-intent-critic`'s blocking
+  findings are narrowed to (a) material ambiguity about the outcome the owner wants, (b) contradictions with recorded
+  answers, (c) consequential intent/design misclassification — speculative improvements, implementation details and
+  stylistic preferences are not findings. Receipt provenance validation, payload schema validation, current-draft
+  binding (`content_head` + `intent_sha256`), eligible-set validation, coverage, the clean-payload requirement for
+  `converged`, critic-unavailability handling and question budgets are unchanged; an old critic receipt still never
+  counts for a revised draft. Design-intent skill pin repinned to behavior-skills `0867d88` (same closed file set;
+  `host_contract_version`/`schema_format_version` stay 1).
+- The `topic:` anchor and `## Intent` block in `goals.md` stay and remain the yardstick finished work is judged against.
+- Run Intent is captured mechanically entering `plan` (`mp set-phase --phase=plan`), which validates `goals.md`
+  (topic anchor + `## Intent` fields), enforces the interview-exit gate, and appends `goals_frozen` with the Intent hash
+  and an empty goal list.
+- Final Intent assessment renamed to `record-intent-check` (replacing `record-goal-check --final`), dispatched via
+  `agents/mp-intent-assessor.md` (final-mode only, evaluated against `## Intent` after the live check).
+- Final gate renamed to `intent_unmet` (`--intent-choice=waiver|abort`), evaluated by `mp finish-step`.
+- Final receipt branch bindings: independent branch facts (`head_sha`, `base`, `diff_hash`, `verify_output_hash`)
+  are bound from a mechanical `verify_passed` event that `finish-step` appends upon a passing `run_verify`
+  (`--verify-passed --verify-output=<file>`), replacing the reliance on implementation goal check receipts.
+- Planners (`mp-planner`, `mp-subsystem-planner`, `mp-spec-decomposer`), reviewers (`mp-plan-reviewer`), and
+  auditors (`mp-alignment-auditor`) judge plan fidelity directly against the run Intent and spec without G-ID citation or coverage rules.
+
+### Compatibility notes
+- **`mp runs list` JSON no longer carries `goals`** per run, and the exported inventory digest
+  helpers (`serializeInventory` / `inventorySha256` in `lib/runs.mjs`) dropped the `goals` member
+  from the canonical row — an inventory digest computed over the same records differs before and
+  after this change. The live CLI overlap digest is unaffected: `mp seed` computes and binds it
+  from the same helper at runtime, so seed-time overlap reviews stay self-consistent; only a
+  digest persisted by an older version goes stale (re-run the overlap review, the recorder says
+  `overlap_review_stale`).
+- **On-disk wire names stay byte-identical**: `goals.md` remains the file name for the run Intent artifact;
+  `goals_hash` remains the canonical run Intent identity; `goals_enabled` remains the bundle marker;
+  `goals_frozen` and `goal_amended` remain the lineage events; and `goal_check` with `final: true` remains the final assessment event.
+- **Hash canonicalization unchanged**: `goalsHash` (both legacy and schema-backed pins), `canonicalGoalsList`,
+  `parseGoals`, and the durable format pin downgrade refusal stay byte-identical. Documents without G blocks
+  canonicalize with `goals: []`, preserving all existing hashes without voiding any receipt or requiring migration.
+- **In-flight and archived bundles**: Existing G blocks on frozen/archived bundles are inert provenance (not a defect);
+  `mp doctor` reports no new findings on archived bundles. Pending final-mode `goals_unmet` gates normalize to
+  `intent_unmet`; pending implementation-mode `goals_unmet` gates are retired with a durable `gate_retired` event
+  and verification re-runs before teardown to establish a `verify_passed` binding source.
+  Legacy promotion transactions without `approval_contract` continue to recover under their original contract.
+
 ## [10.0.18] — 2026-10-08
 
 ### Changed

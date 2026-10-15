@@ -383,7 +383,7 @@ test('discoverRuns: multi-line topic and phase preserved', () => {
   assert.equal(runs[0].phase, 'review');
 });
 
-test('discoverRuns: goals from goals.md', () => {
+test('discoverRuns: the goal list is no longer part of the record (goal tables retired)', () => {
   const { dir } = makeBundle({
     slug: 'run2',
     state: 'slug: run2\nstatus: done\n',
@@ -391,19 +391,16 @@ test('discoverRuns: goals from goals.md', () => {
   });
   const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
   assert.equal(runs.length, 1);
-  assert.deepEqual(runs[0].goals, [
-    { id: 'G1', text: 'first' },
-    { id: 'G2', text: 'second' },
-  ]);
+  assert.equal('goals' in runs[0], false, 'the goals field is no longer produced');
 });
 
-test('discoverRuns: no goals.md yields empty goals', () => {
+test('discoverRuns: no goals.md is not an error', () => {
   const { dir } = makeBundle({
     slug: 'run3',
     state: 'slug: run3\nstatus: done\n',
   });
   const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
-  assert.deepEqual(runs[0].goals, []);
+  assert.equal('goals' in runs[0], false);
 });
 
 test('discoverRuns: planned_paths sorted union of plan.index.json files', () => {
@@ -429,8 +426,8 @@ test('discoverRuns: absent plan.index.json yields empty planned_paths and null w
 // ── inventorySha256 / assertOverlapReviewFresh ─────────────────────────────
 
 test('inventorySha256: stable regardless of input order, changes on topic change', () => {
-  const recA = { slug: 'a', topic: 't1', phase: 'p', status: 'done', goals: [], planned_paths: [] };
-  const recB = { slug: 'b', topic: 't2', phase: 'p', status: 'done', goals: [], planned_paths: [] };
+  const recA = { slug: 'a', topic: 't1', phase: 'p', status: 'done', planned_paths: [] };
+  const recB = { slug: 'b', topic: 't2', phase: 'p', status: 'done', planned_paths: [] };
   const sha1 = inventorySha256([recA, recB]);
   const sha2 = inventorySha256([recB, recA]);
   assert.equal(sha1, sha2);
@@ -440,7 +437,7 @@ test('inventorySha256: stable regardless of input order, changes on topic change
 });
 
 test('assertOverlapReviewFresh: matches returns true, mismatch throws', () => {
-  const records = [{ slug: 'a', topic: 't', phase: 'p', status: 'done', goals: [], planned_paths: [] }];
+  const records = [{ slug: 'a', topic: 't', phase: 'p', status: 'done', planned_paths: [] }];
   const sha = inventorySha256(records);
   assert.equal(assertOverlapReviewFresh({ inventory_sha256: sha }, records), true);
   assert.throws(

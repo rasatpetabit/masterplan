@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v10.0.18** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v10.1.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -61,7 +61,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ bounded briefs / structured digests
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L3 — Agents                                                 │
-│  agents/mp-goal-assessor.md   agents/mp-adversarial-reviewer.md │
+│  agents/mp-intent-assessor.md  agents/mp-adversarial-reviewer.md │
 │  agents/mp-planner.md         agents/mp-plan-reviewer.md       │
 │  agents/mp-intent-critic.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
@@ -72,7 +72,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L4 — Doctor                                                 │
 │  bin/doctor.mjs  dispatcher                                  │
-│  lib/doctor/*.mjs  (24 check modules, auto-discovered)       │
+│  lib/doctor/*.mjs  (23 check modules, auto-discovered)       │
 │  ← Finding {id, severity, summary, fix}; non-zero on ERROR   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -227,7 +227,7 @@ After the wave barrier, L1 runs **D6 scope verification**:
 When the last execute wave's tasks are all `done`, the orchestrator **auto-fires the finalization flow** instead of silently archiving:
 
 1. **Verify** — run the project's verification via `superpowers:verification-before-completion`, citing real output. A failing suite opens a hard-stop gate (fix-first / proceed-anyway-reviewed / abort). No silent archive over red.
-2. **Goal check** — on a `goals_enabled` bundle, `mp-goal-assessor` runs per-goal checks in `implementation` mode (base..tip diff + verify output) before disposition and in `final` mode after the live check (binding tuple `{deploy_base_sha, deploy_chain_hash, live_check_digest}` via `mp record-goal-check --final`).
+2. **Final Intent assessment** — on a `goals_enabled` bundle, `mp-intent-assessor` judges the deployed result against the `## Intent` block after the live check (binding tuple `{deploy_base_sha, deploy_chain_hash, live_check_digest}` via `mp record-intent-check`, echoing the `verify_passed` branch binding).
 3. **Retro** — write `retro.md` if absent; the `## Completion` block reports the completion class and (for install-pushed runs) `pushed: yes/no`.
 4. **Branch-finish gate** — open a durable `branch_finish` gate and surface an `AskUserQuestion`:
    - Merge to base locally

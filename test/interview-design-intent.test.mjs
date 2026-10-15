@@ -10,8 +10,9 @@
 //   1. the schema-backed path STOPS applying the three legacy floors (a captured bundle
 //      converges with every floor deliberately unmet), while
 //   2. it STILL enforces everything else unchanged: zero unanswered questions, the
-//      latest-draft rule, the high-complexity per-round critic receipts, and goals-load's
-//      exhausted assumed-rows handling.
+//      latest-draft rule, the closing-critic receipt contract (a current, clean receipt
+//      bound to the latest draft — an old receipt never counts for a revised draft), and
+//      goals-load's exhausted assumed-rows handling.
 //
 // A legacy twin refuses the same floor-unmet ledger — keeping the legacy suite green does
 // NOT prove the legacy floors stopped applying; this matrix does.
@@ -273,34 +274,50 @@ test('matrix row 3: the latest-draft rule still gates a schema-backed end', () =
   );
 });
 
-test('matrix row 4: high-complexity per-round critic receipts still gate a schema-backed converged', () => {
-  // The high cadence at the ASK forces a receipt after each earlier intent round (a receipt
-  // needs a draft), so the per-round count is organically satisfied — the one honest
-  // violation vector (mirroring the legacy suite's own technique) is a receipt that LATER
-  // stops being valid: the current/clean checks pass, and the per-round DISTINCT-head count
-  // of VALID receipts refuses converged.
+test('matrix row 4: a high-complexity schema-backed interview converges on ONE closing receipt across several rounds', () => {
+  // Closing-critic cadence: intent rounds open with no intervening receipt (the per-round
+  // ask guard and the per-round receipt count are gone), drafts are recorded as they form,
+  // and convergence turns on exactly ONE closing receipt that is CURRENT (content_head ==
+  // head), BOUND to the latest draft (intent_sha256), and CLEAN. A tampered earlier cadence
+  // receipt must not matter — and does not: only the closing receipt is the evidence.
   const { dir, statePath } = mkbundle('high');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
   askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
   answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
-  recordDraft({ skillRoot, statePath, intent: INTENT });
-  // The cadence receipt round 2's intent asks require at high, at the draft head:
-  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1'], forks: true, dir, n: 1 });
+  recordDraft({ skillRoot, statePath, intent: INTENT }); // recorded as it forms — no dispatch mandated
   askQuestion({ skillRoot, statePath, id: 'Q2', round: 2, kind: 'intent', text: 'r2 fork?' });
   askQuestion({ skillRoot, statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick?' });
   answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'a' });
   answerQuestion({ skillRoot, statePath, id: 'Q3', text: 'A' });
   recordDraft({ skillRoot, statePath, intent: INTENT });
-  // The current receipt on the second draft head — valid, clean, eligible (probing met):
-  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir, n: 2 });
-  // TAMPER the round-1 cadence receipt's artifact: it stops being a VALID receipt, and the
-  // distinct valid receipt-head count (1) falls below the completed intent rounds (2).
-  fs.rmSync(path.join(dir, 'interview-critic-1.json'));
+  // NO critic receipt anywhere yet — rounds 1 and 2 both completed without one.
+  const before = interviewStatus(statePath);
+  assert.equal(before.critic.receipts, 0);
+  assert.equal(before.state, null, 'the interview is still open — no receipt was demanded');
+  // The ONE closing receipt on the settled (latest) draft:
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: false, dir, n: 1 });
   const coverageFile = writeCoverage(dir, coverageRows());
+  endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
+  assert.equal(lastEvent(statePath, 'interview_end').reason, 'converged');
+  // The still-enforced bar: a draft revised AFTER the closing receipt makes it stale, and
+  // convergence refuses until a fresh closing receipt covers the revised draft.
+  const { dir: d2, statePath: sp2 } = mkbundle('high');
+  const skillRoot2 = mkskill();
+  capture({ statePath: sp2, skillRoot: skillRoot2 });
+  askQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q1', text: 'because' });
+  askQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q2', round: 2, kind: 'intent', text: 'r2 fork?' });
+  answerQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q2', text: 'a' });
+  askQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q3', round: 3, kind: 'design', text: 'pick?' });
+  answerQuestion({ skillRoot: skillRoot2, statePath: sp2, id: 'Q3', text: 'A' });
+  recordDraft({ skillRoot: skillRoot2, statePath: sp2, intent: INTENT });
+  recordReceipt({ skillRoot: skillRoot2, statePath: sp2, intent: INTENT, eligible: ['Q1', 'Q2'], forks: false, dir: d2, n: 1 });
+  recordDraft({ skillRoot: skillRoot2, statePath: sp2, intent: { ...INTENT, why: 'w2' } });
+  const coverageFile2 = writeCoverage(d2, coverageRows());
   assert.throws(
-    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
-    /converged at high complexity requires one critic receipt per intent round/,
+    () => endInterview({ skillRoot: skillRoot2, statePath: sp2, reason: 'converged', coverageFile: coverageFile2, probingMinimum: 2 }),
+    /requires a fresh critic receipt|requires a critic receipt matching the latest draft/,
   );
 });
 
@@ -661,24 +678,21 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
   assert.equal(ev.probing_minimum, 3, 'the waiver persists the resolved minimum it was judged under');
   // THE BLACK-BOX ROUTE (advisor, wave-13 fix-round completion): drive the ACTUAL
-  // `goals-load --interview-waived` CLI route on the same ledger shape. The configured
-  // bundle (repo config medium: 3) records the cap-waiver cause + its resolved minimum
-  // 3; an identical unconfigured bundle (shipped default 2) records NO cause — omitting
-  // the configuration changes the recorded outcome, which is exactly the regression the
-  // adversary named (the route used to bypass the resolved minimum entirely).
-  const runWaiveRoute = (sp, sr) => spawnSync(process.execPath, [BIN, 'goals-load', `--state=${sp}`, '--interview-waived', '--reason=operator closed it', `--skill-root=${sr}`], { encoding: 'utf8' });
+  // `mp interview waive` CLI route on the same ledger shape (the retired goals-load
+  // route used to bypass the resolved minimum; the dedicated verb must not). The
+  // configured bundle (repo config medium: 3) records the cap-waiver cause + its
+  // resolved minimum 3; an identical unconfigured bundle (shipped default 2) records
+  // NO cause — omitting the configuration changes the recorded outcome.
+  const runWaiveRoute = (sp, sr) => spawnSync(process.execPath, [BIN, 'interview', 'waive', `--state=${sp}`, '--reason=operator closed it', `--skill-root=${sr}`], { encoding: 'utf8' });
   const cfg = build(true);
   const r1 = runWaiveRoute(cfg.statePath, cfg.skillRoot);
-  // The waive runs FIRST; the verb then dies on the freeze's missing --goals flag — the
-  // refusal is the freeze's, never the waiver's:
-  assert.match(r1.stderr, /missing required --goals/, 'the route got past the waiver to the freeze');
-  assert.doesNotMatch(r1.stderr, /interview-waived refused/);
+  assert.equal(r1.status, 0, `the waiver route must succeed: ${r1.stderr}`);
   const e1 = lastEvent(cfg.statePath, 'interview_waived');
   assert.equal(e1.cause, 'probing_minimum_unmet_at_cap', 'the CONFIGURED route records the cap cause');
   assert.equal(e1.probing_minimum, 3, 'the CONFIGURED route persists the resolved minimum 3');
   const noCfg = build(false);
   const r2 = runWaiveRoute(noCfg.statePath, noCfg.skillRoot);
-  assert.match(r2.stderr, /missing required --goals/);
+  assert.equal(r2.status, 0, `the unconfigured waiver route must succeed: ${r2.stderr}`);
   const e2 = lastEvent(noCfg.statePath, 'interview_waived');
   assert.equal(e2.cause, undefined, 'the UNCONFIGURED route (default minimum 2) has 2 eligible = met: no cap cause');
   assert.equal(e2.probing_minimum, 2, 'the unconfigured route persists the shipped default it was judged under');

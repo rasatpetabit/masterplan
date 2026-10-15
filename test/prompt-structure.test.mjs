@@ -63,20 +63,25 @@ test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () 
   }
 });
 
-test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb + finish flags)', () => {
-  // The §2c goal ops + the goals gate are the load-bearing goal-tracking surface — each must be taught.
-  for (const op of ['run_goal_check', "gate:'goals_unmet'", 'run_goals_capture']) {
-    assert.ok(prompt.includes(op), `goal-tracking op/gate missing ${op}`);
+test('prompt teaches the run-Intent finish contract (Intent gate, capture seam + binding flags)', () => {
+  // The final Intent gate is the load-bearing Intent-tracking surface — it must be taught.
+  assert.ok(prompt.includes("gate:'intent_unmet'"), "the intent_unmet gate must be taught");
+  // The retired implementation-mode goal machinery must be GONE (the goal blocks are removed).
+  assert.ok(!prompt.includes('run_goal_check'), 'the retired run_goal_check op must not be taught');
+  assert.ok(!prompt.includes("gate:'goals_unmet'"), 'the retired goals_unmet gate must not be taught');
+  assert.ok(!prompt.includes('mp record-goal-check'), 'the retired record-goal-check verb must not be taught');
+  // The run-Intent capture is mechanical at the brainstorm→plan seam: entering plan validates
+  // goals.md and appends goals_frozen — no approval verb. The retired capture verb must be gone.
+  assert.ok(prompt.includes('--phase=plan'), 'the capture seam is the set-phase plan transition');
+  assert.ok(!prompt.includes('mp goals-load'), 'the retired goals-load verb must not be taught');
+  assert.ok(!prompt.includes('run_goals_capture'), 'the retired capture op must not be taught');
+  // The intent-gate answer flags ARE the resolution surface — each must be taught or the gate dead-ends
+  // (the engine vocabulary is INTENT_CHOICES = waiver|abort in lib/finish-step.mjs).
+  for (const flag of ['--intent-choice=waiver', '--intent-choice=abort', 'mp record-intent-check']) {
+    assert.ok(prompt.includes(flag), `intent-gate answer flag missing ${flag}`);
   }
-  // The goals-capture verb freezes the run's goals — without it a goals-enabled bundle can't be armed.
-  assert.ok(prompt.includes('mp goals-load'), 'the goals-capture contract must name mp goals-load');
-  // The goal-check answer flags ARE the resolution surface — each must be taught or the goal gate dead-ends.
-  // A1 (2026-08-30): the engine vocabulary (GOALS_CHOICES = fix|waiver|abort in lib/finish-step.mjs) — the
-  // former --goals-met/--goals-unmet/--goals-waived/--waiver-reason/--manual-verdict were never read by
-  // bin (a silently-dead gate); bin now threads --goal-check / --goals-choice into finishStep's ctx.
-  for (const flag of ['--goal-check=failed', '--goals-choice=fix', '--goals-choice=waiver', '--goals-choice=abort', 'mp record-goal-check']) {
-    assert.ok(prompt.includes(flag), `goal-check answer flag missing ${flag}`);
-  }
+  // The verify-answer transport: the pass records the durable branch binding.
+  assert.ok(prompt.includes('--verify-output='), 'the run_verify pass answer must carry the output file');
 });
 
 test('prompt teaches the intent-to-completion dispatch contracts (critic blocks, assessor modes, binding fields)', () => {
@@ -85,10 +90,25 @@ test('prompt teaches the intent-to-completion dispatch contracts (critic blocks,
   // judges the operator's actual words, which a round/asked/answered roll-up cannot carry.
   // The block is parsed BOUNDED (between the §2f step-4 heading and the step-5 heading) so a
   // deletion anywhere else in the document cannot satisfy it.
-  const start = prompt.indexOf('4. **Draft + critic round**');
+  const start = prompt.indexOf('4. **Draft persistence + the closing critic pass**');
   const end = prompt.indexOf('5. **Convergence and exit.**');
-  assert.ok(start !== -1 && end > start, 'the §2f draft+critic round anchor must exist — update the structure test anchors');
+  assert.ok(start !== -1 && end > start, 'the §2f draft+closing-critic anchor must exist — update the structure test anchors');
   const criticSection = prompt.slice(start, end);
+  // Whitespace-tolerant view: the section is hard-wrapped prose.
+  const flatSection = criticSection.replace(/\s+/g, ' ');
+  // Closing-critic cadence (operator decision 2026-10-15): recording a draft never mandates
+  // a critic dispatch — the draft persists as it forms, and the ONE closing pass runs when
+  // the draft has settled; a further pass only addresses a substantive finding.
+  assert.ok(flatSection.includes('recording a draft never mandates a critic dispatch'),
+    'the prompt must state that recording a draft no longer mandates a critic dispatch');
+  assert.ok(/ONE\s+closing\s+critic pass/.test(flatSection),
+    'the prompt must describe the single closing critic pass');
+  assert.ok(/when the draft has\s*\*\*settled\*\*/i.test(flatSection),
+    'the closing pass must be tied to the settled draft, not to a round counter');
+  assert.ok(flatSection.includes('A FURTHER critic pass runs only to address a substantive problem'),
+    'a further critic pass must be gated on a substantive finding');
+  assert.ok(flatSection.includes('never to satisfy a round counter'),
+    'round-count-driven critic dispatches must be explicitly forbidden');
   // Exactly ONE dispatch paragraph: the block containing the three quoted-data blocks.
   const dispatchMentions = criticSection.match(/dispatch \*\*`mp-intent-critic`\*\*/g) ?? [];
   assert.equal(dispatchMentions.length, 1, `the critic dispatch block must appear exactly once in the §2f round, got ${dispatchMentions.length}`);
@@ -104,26 +124,23 @@ test('prompt teaches the intent-to-completion dispatch contracts (critic blocks,
   assert.ok(positions[0] < positions[1] && positions[1] < positions[2], 'the three critic quoted-data blocks must appear in (a) seed-topic, (b) replay-ledger, (c) intent-draft order');
   // The replay-derived ledger block must carry question AND answer text (not a budget roll-up).
   assert.ok(criticSection.includes('every question, answer, withdrawal, draft, and critic receipt in order'), 'the replay ledger block must enumerate question AND answer text');
-  // The assessor runs in two governed modes; each mode's binding fields are taught.
-  // Mode names and binding fields are pinned AT THE ROW (finding 2): the pre-disposition
-  // assessor row must name `implementation` mode AND the verify-output payload, and the
-  // final-mode row must name `final` mode AND the binding tuple — whole-document includes()
-  // would pass if those words moved anywhere else, so constrain to the §2c rows.
+  // The final Intent assessor's binding fields are taught AT THE ROW (finding 2): the
+  // run_final_check row must name the assessor, the binding tuple and the branch binding —
+  // whole-document includes() would pass if those words moved anywhere else, so constrain to
+  // the §2c row.
   const c2c = prompt.indexOf('## 2c');
   const c2d = prompt.indexOf('## 2d');
   assert.ok(c2c !== -1 && c2d > c2c, 'the §2c/§2d anchors must exist — update the structure test anchors');
   const c2 = prompt.slice(c2c, c2d);
-  const goalCheckRow = c2.split('\n').find((l) => l.includes('run_goal_check'));
+  assert.ok(!c2.includes('run_goal_check'), 'the retired implementation-mode op row must be gone from §2c');
   const finalCheckRow = c2.split('\n').find((l) => l.includes('run_final_check'));
-  assert.ok(goalCheckRow, 'the §2c run_goal_check row must exist');
   assert.ok(finalCheckRow, 'the §2c run_final_check row must exist');
-  assert.ok(goalCheckRow.includes('`implementation` mode'), 'the run_goal_check row must name `implementation` mode (the pre-disposition assessor)');
-  assert.ok(goalCheckRow.includes('verify'), 'the run_goal_check row must supply the verify output to the implementation-mode assessor');
-  assert.ok(finalCheckRow.includes('`final` mode'), 'the run_final_check row must name `final` mode');
+  assert.ok(finalCheckRow.includes('mp-intent-assessor'), 'the run_final_check row must name the mp-intent-assessor dispatch');
   for (const field of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
     assert.ok(finalCheckRow.includes(field), `the final-mode binding field ${field} must be in the run_final_check row`);
   }
-  assert.ok(prompt.includes('mp record-goal-check --final'), 'the final assessment must be recorded via mp record-goal-check --final');
+  assert.ok(finalCheckRow.includes('branch_binding'), 'the run_final_check row must surface the recorded branch binding');
+  assert.ok(prompt.includes('mp record-intent-check'), 'the final assessment must be recorded via mp record-intent-check');
   // The intent-rejection successor contract: a required --successor and the required_successor event.
   assert.ok(prompt.includes('--successor'), 'the intent-rejection --successor flag must be taught');
   assert.ok(prompt.includes('required_successor'), 'the required_successor obligation must be taught');

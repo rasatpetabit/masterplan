@@ -26,7 +26,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   The deleted Workflow engine (`workflows/execute.workflow.js`,
   `workflows/plan.workflow.js`) was replaced by the native spawn-plan path
   (one descriptor per task, executed by the harness's parallel subagent API).
-- **L3 — Agents:** nine markdown agent briefs under `agents/` (`mp-goal-assessor`,
+- **L3 — Agents:** nine markdown agent briefs under `agents/` (`mp-intent-assessor`,
   `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`, `mp-alignment-auditor`,
   `mp-intent-critic`, `mp-fallback-reviewer` — the finish-gate fallback reviewer, deliberately named outside the

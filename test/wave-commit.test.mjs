@@ -1159,12 +1159,15 @@ test('record-result carries the v2 Intent outcome line VERBATIM out to the shell
   assert.match(res.summary[0], /^wave 1: recorded tasks 1/);
 });
 
-test('record-result falls back to the goal list for a v1 bundle with no Intent block', () => {
+test('record-result on a v1 bundle with no Intent block emits the wave line alone', () => {
+  // The goal-list fallback is retired with the goal blocks: a pre-Intent document has no
+  // intent-level bar to quote, so the reminder is empty rather than quoting its goals.
   const fx = goalsFixture('t-goals-v1', V1_GOALS_DOC);
   const res = recordOneCleanWave(fx);
   assert.equal(res.goals_reminder.version, 1);
   assert.equal(res.goals_reminder.outcome, null, 'there is no Intent block to quote');
-  assert.match(res.summary[1], /^goals: .*G1: the widget compiles/);
+  assert.equal(res.goals_reminder.line, null, 'no goal-list fallback');
+  assert.equal(res.summary.length, 1, JSON.stringify(res.summary));
 });
 
 test('record-result on a bundle with no goals emits the wave line alone', () => {

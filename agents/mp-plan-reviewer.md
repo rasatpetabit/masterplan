@@ -76,8 +76,8 @@ complete artifacts makes the whole review FAIL (fail-closed) — never a silentl
    non-existent flag/verb or an absent `--self-test`. A verify command that fails any of these is
    a plan defect → REVISE, not a task failure. Every path named in a task's `verify_commands`
    must appear in the `files:` list of that task or a declared-dependency task.
-4. **Goal coverage.** Every goal in `goals.md` must be served by at least one task's `goals` refs;
-   name any goal with no covering task.
+4. **Intent fidelity.** The plan as a whole serves the run Intent in `goals.md` (the `topic:`
+   anchor + `## Intent`) without dropping stated outcomes or violating anti-goals.
 5. **Decomposition sanity.** Flag a task that bundles unrelated work (should split), or trivial
    slivers that should merge. Do NOT propose a wave re-layout — waves are derived deterministically
    from deps + files; if the parallelism looks wrong, the fix is a missing/excess `dep`, so name
@@ -88,9 +88,8 @@ complete artifacts makes the whole review FAIL (fail-closed) — never a silentl
     ## Plan review
     - verdict: PASS | REVISE | FAIL
     - coverage: <covered>/<total> acceptance criteria  (uncovered: <list or "none">)
-    - goal coverage: <n>/<m> goals served  (unserved: <list or "none">)
     - findings:
-      - [coverage|consistency|verify|decomposition] <task id(s) or spec ref> — <one line> — fix: <one line>
+      - [coverage|consistency|verify|decomposition|intent] <task id(s) or spec ref> — <one line> — fix: <one line>
       - ...
     - note: <one line, or "none">
 
@@ -100,15 +99,11 @@ each finding's task ids / spec refs actually exist in the artifacts; drop a find
 citation is fabricated and say so in `note:`.
 
 Verdict rubric:
-- **PASS** — every acceptance criterion is covered, no consistency break, verify commands adequate.
+- **PASS** — every acceptance criterion is covered, no consistency break, verify commands adequate, intent served.
 - **REVISE** — coverage is complete but there are fixable findings (a weak verify, a thin
   decomposition seam, a missing `dep`). Plan is usable after the listed edits.
 - **FAIL** — an acceptance criterion is uncovered, or a consistency break would produce a broken
   build. Name exactly what is missing.
-
-Note: `goals` referential enforcement is machine-checked by `mp validate-plan-index` (referential,
-not semantic). The critic's job is the semantic check that the mapping is meaningful, not just
-present.
 
 ## Fail rule (fail-closed, never fabricate)
 If `spec.md` or the merged plan is unreadable or absent, say so in `note:` and return `verdict:

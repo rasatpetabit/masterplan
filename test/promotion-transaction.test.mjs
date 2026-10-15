@@ -570,16 +570,54 @@ test('an approval that does not bind the on-disk bases is refused (replay/stale)
   assert.equal(fs.existsSync(promotionDocPath(fx.statePath, 'tx-stale')), false);
 });
 
-test('an approval missing the goals_amend receipt refuses when goals change', () => {
+test('approval contract 2: a new promotion needs only the outer approval when goals change (design regression case 5)', () => {
   const fx = mkbundle();
   const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
   const goalsResult = GOALS + '## G4: NoReceipt\nsignal: test\n';
   const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-noreceipt' });
   delete inputs.approval.goals_amend;
+  const out = beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  assert.equal(out.ok, true, 'the outer approval alone authorizes a goals.md change under contract 2');
+  const doc = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'tx-noreceipt'), 'utf8'));
+  assert.equal(doc.approval_contract, 2, 'new prepared transactions carry approval_contract: 2');
+});
+
+test('approval contract: a legacy prepared document (no approval_contract) without its goal_amend receipt is refused (design regression case 5)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: LegacyDoc\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-legacy-noreceipt' });
+  delete inputs.approval.goals_amend;
+  // Begin under contract 2 (the current writer), then strip the marker: the doc is now a
+  // legacy prepared document that changes goals.md and carries no goal_amend receipt.
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const docPath = promotionDocPath(fx.statePath, 'tx-legacy-noreceipt');
+  const doc = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  delete doc.approval_contract;
+  delete doc.approval.goals_amend;
+  fs.writeFileSync(docPath, JSON.stringify(doc, null, 2) + '\n');
   assert.throws(
-    () => beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 }),
+    () => commitPromotion({ statePath: fx.statePath, transactionId: 'tx-legacy-noreceipt', self: self(fx), now: 2000 }),
     /requires its own exact-artifact goal_amend approval receipt/
   );
+});
+
+test('approval contract: a legacy prepared document with its goal_amend receipt recovers under the original contract (design regression case 5)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: LegacyDoc\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-legacy-receipt' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const docPath = promotionDocPath(fx.statePath, 'tx-legacy-receipt');
+  const doc = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  delete doc.approval_contract; // legacy shape
+  // A legacy begin normalized the goal_amend receipt into doc.approval; restore that half
+  // of the legacy document (contract-2 begin does not carry it).
+  doc.approval.goals_amend = inputs.approval.goals_amend;
+  fs.writeFileSync(docPath, JSON.stringify(doc, null, 2) + '\n');
+  const out = commitPromotion({ statePath: fx.statePath, transactionId: 'tx-legacy-receipt', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'promoted', JSON.stringify(out));
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), goalsResult);
 });
 
 // ---- the lock ------------------------------------------------------------------------
@@ -1499,4 +1537,73 @@ test('gate iteration 6: the pin is the EXACT on-disk bytes — no clean/EOL filt
   const rec = recoverPromotion({ statePath: fx.statePath, transactionId: 'crlf', self: self(fx), now: 6001 });
   assert.equal(rec.outcome, 'recorded', JSON.stringify(rec));
   assert.equal(rec.replay, true);
+});
+
+// ---- L2 (review blocker): a new promotion must not DELETE an existing Intent block ------
+
+// A base document WITH an Intent block (the shape every post-removal run carries).
+const INTENT_BLOCK = [
+  '## Intent',
+  'why: the promoted run keeps a judgeable Intent',
+  'outcome: the amendment refines the Intent without deleting it',
+  'anti_goals:',
+  '- deleting the Intent block through a promotion',
+  'done_means: a green suite',
+  '',
+].join('\n');
+
+test('a new promotion whose resulting goals.md drops the Intent block is refused BEFORE any write (L2)', () => {
+  const goalsBase = GOALS + INTENT_BLOCK;
+  const fx = mkbundle({ goalsBase });
+  // The result: the same document with the Intent block REMOVED (a deletion diff).
+  const goalsResult = GOALS;
+  fs.writeFileSync(path.join(fx.scratch.b, 'spec.md'), SPEC);
+  fs.writeFileSync(path.join(fx.scratch.b, 'goals.md'), goalsResult);
+  const diff = gitDiffText(fx.scratch.a, fx.scratch.b);
+  const bases = { spec: sha256Of(SPEC), goals: sha256Of(goalsBase) };
+  const results = { spec: sha256Of(SPEC), goals: sha256Of(goalsResult) };
+  const approval = approvalReceipt({ txid: 'tx-intdel', bases, results, diffDigest: sha256Of(diff) });
+  assert.throws(
+    () => beginPromotion({
+      statePath: fx.statePath, transactionId: 'tx-intdel', diff,
+      resultSpec: SPEC, resultGoals: goalsResult, approval, now: 1000,
+    }),
+    /## Intent block[\s\S]*cannot delete/,
+    'the admission refusal names the deleted Intent block'
+  );
+  // Refused BEFORE any transaction document, ref pin, artifact write or lineage event.
+  assert.equal(fs.existsSync(promotionDocPath(fx.statePath, 'tx-intdel')), false, 'no transaction document');
+  assert.deepEqual(git(fx.MAIN, 'for-each-ref', `--format=%(refname)`, `refs/${PROMOTION_REFS_PREFIX}tx-intdel/`).split('\n').filter(Boolean), [], 'no base pins');
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), goalsBase, 'the artifact is untouched');
+  assert.equal(readEvents(fx.bundleDir).length, 0, 'no lineage event');
+});
+
+test('a new promotion that AMENDS the Intent block still begins (L2 keeps amendments working)', () => {
+  const goalsBase = GOALS + INTENT_BLOCK;
+  const fx = mkbundle({ goalsBase });
+  const goalsResult = GOALS + INTENT_BLOCK.replace('the amendment refines the Intent without deleting it', 'the amendment refines the Intent and keeps it');
+  fs.writeFileSync(path.join(fx.scratch.b, 'spec.md'), SPEC);
+  fs.writeFileSync(path.join(fx.scratch.b, 'goals.md'), goalsResult);
+  const diff = gitDiffText(fx.scratch.a, fx.scratch.b);
+  const bases = { spec: sha256Of(SPEC), goals: sha256Of(goalsBase) };
+  const results = { spec: sha256Of(SPEC), goals: sha256Of(goalsResult) };
+  const approval = approvalReceipt({ txid: 'tx-intamend', bases, results, diffDigest: sha256Of(diff) });
+  const out = beginPromotion({
+    statePath: fx.statePath, transactionId: 'tx-intamend', diff,
+    resultSpec: SPEC, resultGoals: goalsResult, approval, now: 1000,
+  });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(fs.existsSync(promotionDocPath(fx.statePath, 'tx-intamend')), true, 'the transaction document was written');
+});
+
+test('a genuine v1 document (no Intent block anywhere) keeps promoting (L2 does not retrofit v1)', () => {
+  // The default fixture IS the v1 shape: base and result carry G blocks and no Intent block.
+  // The happy-path tests above exercise it; this asserts the admission rule specifically.
+  const fx = mkbundle();
+  const goalsResult = GOALS + '## G4: Promoted\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult: SPEC, goalsResult, txid: 'tx-v1' });
+  const out = beginPromotion({
+    statePath: fx.statePath, ...inputs, now: 1000,
+  });
+  assert.equal(out.ok, true, JSON.stringify(out));
 });

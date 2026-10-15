@@ -97,7 +97,15 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
     self = buildOwnerIdentity({ host: 'h1', session: 'sess-A', slug, now: 1000 });
     assert.equal(acquireOwner(bundleDir, self, { now: 1000 }).outcome, 'acquire');
   }
-  const step = (extra = {}) => finishStep({ statePath, self, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, self, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
+  });
   return { tmp, MAIN, WT, bundleDir, statePath, self, step };
 }
 
@@ -1258,9 +1266,12 @@ test('finishStep persists one subject across changed HEAD, retry and process res
   assert.equal(first.subject, `${fx.MAIN}::docs/masterplan/t24/finish-review`);
   assert.equal(readState(fx.statePath).finish_review_subject, first.subject);
   assert.equal(first.stakes, 'critical');
-  const history = readEvents(fx.bundleDir);
   write(fx.WT, 'src/a.txt', 'repair\n'); git(fx.WT, 'add', '.'); git(fx.WT, 'commit', '-qm', 'repair');
   fx.step({ verify: 'pass' });
+  // History is snapshotted AFTER the verify answer: a pass now durably records the
+  // verify_passed branch binding (the goal-block removal), so only the REVIEW surface's
+  // own writes may follow.
+  const history = readEvents(fx.bundleDir);
   const again = finishStep({ statePath: fx.statePath, self: fx.self, now: 2000, policy: fixture });
   assert.equal(again.subject, first.subject);
   assert.equal(again.stakes, 'critical');
@@ -1305,10 +1316,13 @@ test('finishStep refuses successful inconclusive review before evidence or branc
 test('historical routing skip cannot clear a newly governed gate or allocate a new subject', () => {
   const fx = armedFixture();
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify({ type: 'adversary_review_skipped', data: { sha: git(fx.WT, 'rev-parse', 'HEAD') }, summary: 'outage' })+'\n');
-  const before = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8');
   assert.throws(() => walkToReview(fx, { policy: fixture }), /active-episode.*migration/);
   assert.equal(readState(fx.statePath).finish_review_subject, undefined);
-  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'), before);
+  // The only legal append is the mechanical verify_passed the pass answer records; the
+  // historical skip is still the only review-family record on the ledger.
+  const evs = readEvents(fx.bundleDir);
+  assert.deepEqual(evs.filter((e) => e.type !== 'verify_passed'),
+    [{ type: 'adversary_review_skipped', data: { sha: git(fx.WT, 'rev-parse', 'HEAD') }, summary: 'outage' }]);
 });
 
 test('critical empty or verdict-less completion refuses before any successful review event', () => {

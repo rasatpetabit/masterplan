@@ -41,7 +41,7 @@ their fragments into the index. The output is the seam map, not the plan.
 - **You decide nothing downstream.** `recommend_parallel` is advice; L1's `planning.mode`
   (`serial`/`parallel`/`auto`) makes the final call. Under `auto`, L1 goes parallel only when the
   decomposition recommends it **and** there are ≥2 subsystems.
-- **Judgment stays on-lane.** Your file reads and repo searches ground the payload (spec, goals, a compact
+- **Judgment stays on-lane.** Your file reads and repo searches ground the payload (spec, run Intent, a compact
   tree survey of where code lives); the seam judgment itself is produced here on the governed
   lane, then validated against the digest schema before returning.
 
@@ -91,7 +91,7 @@ A single object, validated at the tool boundary:
 - **Coherent responsibility per subsystem.** Each should be describable in one sentence of intent
   ("the HTTP layer", "the persistence layer", "the CLI surface"). A subsystem you can only describe
   as "miscellaneous" is a cut that hasn't found its seam yet. Trace each subsystem's scope back to
-  the run's goals so downstream drafters can annotate each task's `goals` refs.
+  the run's Intent and spec so downstream drafters can align their task scopes.
 - **Cross-subsystem ordering is fine — overlap is not.** Subsystems may depend on each other (the
   drafters express that with `deps`, and the merge turns deps into waves). What must be avoided is
   two subsystems *editing the same files*. Ordering → fine; shared mutable scope → bad cut.
