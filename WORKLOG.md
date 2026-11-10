@@ -1,5 +1,20 @@
 # WORKLOG
 
+## 2026-11-10 — skills: Codex AUQ fallback fails closed, never prose
+
+Branch `auq-gates/20261110` (worktree `.worktrees/auq-gates-20261110`), operator-approved AUQ
+alignment. `skills/masterplan/SKILL.md` Codex tool-adaptation row: "otherwise ask one concise
+prose question and wait" → fail closed — defer that decision, never a prose question (fleet
+auq.md § "A mode-dependent tool is not a missing tool"). No other scripted approval stop in that
+file: the remaining ask rules already mandate `ask_user_question`/`AskUserQuestion`. INTENT:
+serves (Posture — owner asked at genuine forks, never prose).
+Verification: skill-content suites pass — agents/agents-compat/publish-hygiene 49/49 exit 0,
+install-pi/cli-surface/design-intent-host-contract 38/38 exit 0. Full `npm test` fails in this
+environment identically without the edit (67 fail with, 70 fail on unmodified main HEAD;
+lock/coordination suites SIGTERM — pre-existing, not from this two-line markdown edit). No
+release performed: RELEASING.md route (version bump, `node scripts/release.mjs`, tag push,
+`node bin/install-pi.mjs`) untouched.
+
 ## 2026-10-15 — closing critic pass for the intent interview
 
 Scope: `lib/interview.mjs` critic cadence, `agents/mp-intent-critic.md` finding classes, `commands/masterplan.md` §2f step 4, the design/verbs docs that restate the cadence, the design-intent skill pin, and the interview/critic test suites. Worktree `.worktrees/intent-critic-cadence`, branch `intent-critic-cadence`, stacked on `remove-goal-blocks` (cc8ef9c).

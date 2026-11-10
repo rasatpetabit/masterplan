@@ -239,8 +239,8 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
 - Read/LS/Grep/Glob: shell reads with `sed`, `ls`, `rg`, or `rg --files`.
 - Edit/MultiEdit: `apply_patch`.
 - Bash: `exec_command`.
-- AskUserQuestion/Question: `request_user_input` when available; otherwise ask
-  one concise prose question and wait.
+- AskUserQuestion/Question: `request_user_input` when available; otherwise
+  fail closed — defer that decision, never a prose question.
 - Task/Todo task tracking: `update_plan`.
 - Workflow: **no Codex equivalent — and none needed.** Execute waves come back as
   the `dispatch_fabric` op on every host (suppressed or not) — run `op.tasks` one
