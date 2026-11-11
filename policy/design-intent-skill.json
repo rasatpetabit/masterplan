@@ -2,8 +2,8 @@
   "$comment": "Task 49 pin: the /design-intent skill revision masterplan's design-intent integration (run intent-to-completion, spec §5/§5.5) verifies against — not whatever a checkout happens to hold. The skill identity model lives in docs/internals/design-intent-integration.md; the digest recomputes over the manifest's closed file set (git-tracked bytes at the pinned commit) per the manifest's identity.canonicalization. Update this pin only through an explicit, recorded skill-identity change (spec §5.5 mp interview amend-skill-identity owns the masterplan-side flow).",
   "repo": "/srv/dev/ai/intent",
   "skill_path": "skills/intent",
-  "commit": "482f5d0d35b68754ea65275b0fc5b11d1e4a1d23",
-  "manifest_digest": "85480e208bab7e95fb2cac03de591d0c032169f545281feaa829f1268113b579",
+  "commit": "fc068746d8761c3298da176e0c3dc9011c31da98",
+  "manifest_digest": "12ab8467f77ba4782548aa9619195ea261842d4ab6543033b100cf3d7745ba08",
   "host_contract_version": 1,
   "schema_format_version": 1
 }
