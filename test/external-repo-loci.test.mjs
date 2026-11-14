@@ -18,6 +18,7 @@ import { recordWaveResult, captureWtFiles } from '../lib/wave-commit.mjs';
 import { dispatchWaveViaFabric, readWaveDispatchRecord, reviewNativeResult } from '../lib/dispatch-wave.mjs';
 import { precheckWatchList, snapshotWatchList, buildWatchList, verifyWatchListDelta } from '../lib/watch-integrity.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
+import { verifyRecoverySelector } from '../lib/recovery-preflight.mjs';
 
 const policy = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 function git(repo, ...args) {
@@ -273,4 +274,206 @@ test('external partial wave: worktree-spelled scope commits only the done extern
   assert.equal(git(fx.extWT, 'status', '--porcelain'), '');
   assert.equal(git(fx.WT, 'show', 'HEAD:src/a.rs'), 'coordinator seed');
   assert.equal(fs.readFileSync(path.join(fx.WT, 'src/a.rs'), 'utf8'), 'run unfinished\n');
+});
+
+function setTasks(fx, tasks) {
+  writeState(fx.statePath, { ...readState(fx.statePath), tasks });
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: tasks.map((task) => ({
+    ...task, description: `task ${task.id}`, verify_commands: [],
+  })) }));
+}
+async function launch(fx) {
+  assert.equal(continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 }).op, 'dispatch_fabric');
+  const out = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy });
+  assert.equal(out.outcome, 'native-spawn-plan', JSON.stringify(out));
+  return out;
+}
+
+for (const directory of [false, true]) {
+  test(`blocker R1: record reports protected EXT main ${directory ? 'directory' : 'file'} changes without restoring bytes`, async (t) => {
+    const fx = fixture(t);
+    if (directory) setTasks(fx, [{ id: 1, wave: 1, status: 'pending', files: [`${fx.EXT}/src/`] }]);
+    write(fx.EXT, 'src/a.rs', 'another session before launch\n');
+    await launch(fx); // main dirt must not block launch
+    write(fx.EXT, 'src/a.rs', 'misdirected worker edit\n');
+    const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() });
+    assert.equal(recorded.watch.ok, false);
+    const violation = recorded.watch.violations.find((v) => v.repo === fx.EXT && v.rel === 'src/a.rs');
+    assert.ok(violation, JSON.stringify(recorded.watch));
+    assert.equal(violation.restore, null);
+    assert.match(violation.reason, /protected.*main/i);
+    assert.equal(fs.readFileSync(fx.source, 'utf8'), 'misdirected worker edit\n');
+    assert.deepEqual(recorded.watch.reverted, []);
+  });
+}
+
+test('blocker R1: undeclared EXT main changes, including commits, are ignored', async (t) => {
+  const fx = fixture(t);
+  await launch(fx);
+  write(fx.EXT, 'unrelated.rs', 'other session\n');
+  git(fx.EXT, 'add', 'unrelated.rs');
+  git(fx.EXT, 'commit', '-qm', 'other session commit');
+  write(fx.extWT, 'src/a.rs', 'done\n');
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() });
+  assert.equal(recorded.watch.ok, true, JSON.stringify(recorded.watch));
+  assert.equal(fs.readFileSync(path.join(fx.EXT, 'unrelated.rs'), 'utf8'), 'other session\n');
+});
+
+test('blocker R1: a declared clean file committed in EXT main is still detected', async (t) => {
+  const fx = fixture(t);
+  await launch(fx);
+  write(fx.EXT, 'src/a.rs', 'misdirected commit\n');
+  git(fx.EXT, 'add', 'src/a.rs');
+  git(fx.EXT, 'commit', '-qm', 'misdirected commit');
+  const head = git(fx.EXT, 'rev-parse', 'HEAD');
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() });
+  assert.ok(recorded.watch.violations.some((v) => v.repo === fx.EXT && v.rel === 'src/a.rs' && v.restore === null));
+  assert.equal(git(fx.EXT, 'rev-parse', 'HEAD'), head);
+  assert.equal(fs.readFileSync(fx.source, 'utf8'), 'misdirected commit\n');
+});
+
+test('blocker R2: external committed recovery passes Phase A and records Phase B in the frozen locus', async (t) => {
+  const fx = fixture(t, { review: true });
+  await launch(fx);
+  const baselinePath = path.join(fx.bundleDir, '.wave-1.watch.json');
+  const baseline = fs.readFileSync(baselinePath);
+  const extBefore = mainSnapshot(fx.EXT);
+  write(fx.extWT, 'src/a.rs', 'recovered external commit\n');
+  git(fx.extWT, 'add', 'src/a.rs');
+  git(fx.extWT, 'commit', '-qm', 'recovered external work');
+  const head = git(fx.extWT, 'rev-parse', 'HEAD');
+  const recoverySelector = { repo: fx.extWT, head };
+  const args = { statePath: fx.statePath, self: fx.self, result: result(), recoverySelector, policy, now: 3000 };
+  const pending = await reviewNativeResult(args);
+  assert.equal(pending.review_outcome, 'recovery-review-pending');
+  assert.equal(pending.pending_reviews[0].identity.head, head);
+  const reviewed = await reviewNativeResult({ ...args, providedReviews: {
+    1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity },
+  } });
+  const recorded = recordWaveResult({ ...args, result: reviewed, recovery: true,
+    deferredEvents: reviewed.deferred_review_events });
+  assert.equal(recorded.outcome, 'recorded', JSON.stringify(recorded));
+  assert.equal(recorded.commits.code, head);
+  assert.equal(recorded.watch.ok, true);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  assert.equal(git(fx.extWT, 'rev-parse', 'HEAD'), head);
+  assert.deepEqual(fs.readFileSync(baselinePath), baseline);
+  assert.deepEqual(mainSnapshot(fx.EXT), extBefore);
+});
+
+test('blocker R2: selector naming EXT main is refused without state writes', async (t) => {
+  const fx = fixture(t, { review: true });
+  await launch(fx);
+  const state = fs.readFileSync(fx.statePath);
+  const selector = { repo: fx.EXT, head: git(fx.EXT, 'rev-parse', 'HEAD') };
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+    result: result(), recoverySelector: selector, policy }), /does not match.*frozen/);
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000,
+    result: { wave: 1, tasks: [] }, recovery: true, recoverySelector: selector });
+  assert.equal(recorded.outcome, 'recovery-preservation-violation');
+  assert.match(recorded.violations.join('; '), /selector repo|run locus/);
+  assert.deepEqual(fs.readFileSync(fx.statePath), state);
+});
+
+test('blocker R3: missing dispatched external worktree refuses done digest with zero writes or commits', async (t) => {
+  const fx = fixture(t);
+  await launch(fx);
+  git(fx.EXT, 'worktree', 'remove', fx.extWT);
+  const state = fs.readFileSync(fx.statePath);
+  const eventsPath = path.join(fx.bundleDir, 'events.jsonl');
+  const events = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath) : null;
+  const mainHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const extHead = git(fx.EXT, 'rev-parse', worktreeBranchFor(fx.slug));
+  assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() }),
+    (err) => err.message.includes(fx.extWT) && /missing|does not exist/.test(err.message));
+  assert.deepEqual(fs.readFileSync(fx.statePath), state);
+  assert.deepEqual(fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath) : null, events);
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), mainHead);
+  assert.equal(git(fx.EXT, 'rev-parse', worktreeBranchFor(fx.slug)), extHead);
+});
+
+test('blocker R4: pre-existing dirt under an external directory scope refuses launch', async (t) => {
+  const fx = fixture(t);
+  ensureExternal(fx);
+  const scope = `${fx.EXT}/generated/`;
+  setTasks(fx, [{ id: 1, wave: 1, status: 'pending', files: [scope] }]);
+  write(fx.extWT, 'generated/a.rs', 'pre-existing work\n');
+  const snapshots = snapshotWatchList(buildWatchList([scope], fx.opts));
+  for (const baseline of [null, [`${fx.EXT}/generated/a.rs`], [scope]]) {
+    const pre = precheckWatchList(snapshots, [scope], { baseline });
+    assert.equal(pre.ok, false, `baseline=${JSON.stringify(baseline)}`);
+    assert.ok(pre.violations.some((v) => v.repo === fx.extWT && v.path === 'generated/a.rs'));
+  }
+  assert.equal(precheckWatchList(snapshots, [scope], { baseline: [] }).ok, true, 'retry residue remains permitted');
+  assert.equal(continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 }).op, 'dispatch_fabric');
+  const dispatch = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy });
+  assert.equal(dispatch.outcome, 'precheck-failed', JSON.stringify(dispatch));
+  assert.equal(fs.readFileSync(path.join(fx.extWT, 'generated/a.rs'), 'utf8'), 'pre-existing work\n');
+});
+
+test('blocker R5: partial external wave commits the done directory scope, not the failed file', async (t) => {
+  const fx = fixture(t);
+  setTasks(fx, [
+    { id: 1, wave: 1, status: 'pending', files: [`${fx.EXT}/generated/`] },
+    { id: 2, wave: 1, status: 'pending', files: [`${fx.EXT}/other.rs`] },
+  ]);
+  await launch(fx);
+  write(fx.extWT, 'generated/a.rs', 'regenerated\n');
+  write(fx.extWT, 'other.rs', 'unfinished\n');
+  const res = result();
+  res.tasks.push({ task_id: 2, digest: { task_id: 2, status: 'failed', files_changed: ['other.rs'], summary: 'failed', blockers: ['unfinished'] } });
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: res });
+  assert.equal(recorded.outcome, 'recorded');
+  assert.equal(recorded.scope.ok, true);
+  assert.equal(git(fx.extWT, 'show', 'HEAD:generated/a.rs'), 'regenerated');
+  assert.equal(git(fx.extWT, 'show', '--format=', '--name-only', 'HEAD'), 'generated/a.rs');
+  assert.equal(git(fx.extWT, 'status', '--porcelain'), '?? other.rs');
+  assert.equal(fs.readFileSync(path.join(fx.extWT, 'other.rs'), 'utf8'), 'unfinished\n');
+});
+
+for (const foreign of [false, true]) {
+  test('blocker R2: frozen selector agreement cannot authorize ' + (foreign ? 'a foreign worktree' : 'EXT main'), async (t) => {
+    const fx = fixture(t, { review: true });
+    await launch(fx);
+    const repo = foreign ? path.join(fx.EXT, '.worktrees/foreign') : fx.EXT;
+    if (foreign) git(fx.EXT, 'worktree', 'add', '-qb', 'foreign', repo);
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    record.review_context.tasks[0].repo = repo;
+    write(fx.bundleDir, 'wave-1.dispatch.json', JSON.stringify(record));
+    const verdict = verifyRecoverySelector({ recoverySelector: { repo, head: git(repo, 'rev-parse', 'HEAD') },
+      WT: fx.WT, MAIN: fx.MAIN, slug: fx.slug, wave: 1, bundleDir: fx.bundleDir });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.violations.join('; '), /not a run locus/);
+  });
+}
+
+test('blocker R2: an external recovered commit outside declared scope is refused without writes', async (t) => {
+  const fx = fixture(t, { review: true });
+  await launch(fx);
+  write(fx.extWT, 'src/a.rs', 'recovered work\n');
+  write(fx.extWT, 'rogue.rs', 'unscoped committed work\n');
+  git(fx.extWT, 'add', 'src/a.rs', 'rogue.rs');
+  git(fx.extWT, 'commit', '-qm', 'recovery with scope breach');
+  const head = git(fx.extWT, 'rev-parse', 'HEAD');
+  const state = fs.readFileSync(fx.statePath);
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000,
+    result: { wave: 1, tasks: [] }, recovery: true, recoverySelector: { repo: fx.extWT, head } });
+  assert.equal(recorded.outcome, 'recovery-preservation-violation');
+  assert.match(recorded.violations.join('; '), /rogue.rs outside the declared scope/);
+  assert.deepEqual(fs.readFileSync(fx.statePath), state);
+  assert.equal(git(fx.extWT, 'rev-parse', 'HEAD'), head);
+});
+
+test('blocker R1: umbrella sibling main is protected just like external main', async (t) => {
+  const fx = fixture(t);
+  const sibling = path.join(fx.MAIN, 'sibling');
+  init(sibling, 'sibling');
+  write(fx.MAIN, '.git/info/exclude', '/sibling/\n');
+  setTasks(fx, [{ id: 1, wave: 1, status: 'pending', files: ['sibling/src/a.rs'] }]);
+  write(sibling, 'src/a.rs', 'pre-existing sibling main dirt\n');
+  await launch(fx);
+  write(sibling, 'src/a.rs', 'misdirected sibling edit\n');
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() });
+  assert.ok(recorded.watch.violations.some((v) => v.repo === sibling && v.rel === 'src/a.rs' && v.restore === null));
+  assert.equal(fs.readFileSync(path.join(sibling, 'src/a.rs'), 'utf8'), 'misdirected sibling edit\n');
 });

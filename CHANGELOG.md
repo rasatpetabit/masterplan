@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Protect sibling/external main checkouts against wave changes to declared paths without auto-restoring another session's bytes; ignore undeclared changes there.
+- Record committed recovery against its frozen single run edit locus, including sibling/external worktrees, never a main checkout.
+- Fail recording before any state write or commit when a declared sibling/external run worktree is missing; only provisional launch baselines may skip it.
+- Refuse launch over pre-existing dirt beneath declared directory scopes, including the frozen-baseline comparison.
+- Commit files beneath done tasks' directory scopes in partial waves while leaving failed tasks' partial edits uncommitted.
 - Route absolute task files in repositories beside MAIN through per-run external worktrees
   with absolute namespaces for capture, scope checks, commits, and crash recovery. Recovery
   never falls back to those repositories' main checkouts, and review uses each task's own

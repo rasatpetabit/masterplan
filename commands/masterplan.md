@@ -378,6 +378,11 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
      absolute main-checkout root as their namespace and `<repo>/.worktrees/<slug>` on
      `masterplan/<slug>` as their edit/commit/reset locus. Other linked worktrees are refused;
      recovery skips a missing run worktree, never falling back to that repository's main checkout.
+     Sibling/external main checkouts are PROTECTED watch loci: launch permits their existing
+     dirt, but a wave-time change to a declared file or beneath a declared directory scope is
+     reported against that main checkout and never auto-restored; undeclared changes are ignored.
+     Recording refuses a missing declared run worktree before any state write or commit (only
+     the provisional pre-dispatch baseline may skip one).
      Each task freezes its own locus HEAD for review. At finish, umbrella siblings and external
      loci are derived from `state.tasks[].files`, deduplicated and sorted by main-checkout path;
      the same `branch_finish` answer covers all of them, without a persisted discovery registry.
