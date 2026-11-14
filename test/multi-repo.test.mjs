@@ -306,3 +306,17 @@ test('mapUmbrellaPathsToRepos: strips sibling prefix per locus', () => {
   assert.deepEqual(m.get('/wt'), ['docs/a.md']);
   assert.deepEqual(m.get('/sib-wt'), ['kas/x.yaml', 'layers/y.conf']);
 });
+
+test('mapUmbrellaPathsToRepos: a directory scope keeps its trailing slash in every namespace', () => {
+  // Watch-delta and precheck attribution treat a scope ending in "/" as a directory; mapping
+  // it to a bare name would turn yanos-os/kas/ into an exact match for a file named kas.
+  const loci = [
+    { repo: '/wt', prefix: null },
+    { repo: '/sib-wt', prefix: 'yanos-os' },
+    { repo: '/ext/.worktrees/s', prefix: '/ext' },
+  ];
+  const m = mapUmbrellaPathsToRepos(['docs/gen/', 'yanos-os/kas/', '/ext/bindings/go/generated/'], loci);
+  assert.deepEqual(m.get('/wt'), ['docs/gen/']);
+  assert.deepEqual(m.get('/sib-wt'), ['kas/']);
+  assert.deepEqual(m.get('/ext/.worktrees/s'), ['bindings/go/generated/']);
+});
