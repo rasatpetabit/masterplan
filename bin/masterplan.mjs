@@ -237,6 +237,7 @@ import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } from '../lib/finish-step.mjs';
+import { finishLocusFacts } from '../lib/finish-loci.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
@@ -3229,7 +3230,8 @@ function main() {
       //   --head=<git rev-parse HEAD>           current commit, for the verified-at-SHA skip
       //   --porcelain=<git status --porcelain>  raw, for task-scope-vs-unrelated dirt classification
       //   --branches=<git branch ...>           raw (one name/line), for base detection (main|master)
-      // All git flags are OPTIONAL: a fs-only call (no git facts) still reports retro/verified/commands.
+      // Run-repository git flags are OPTIONAL. Other repository facts are read through the
+      // same helper as branch_finish; unavailable facts are explicit, not a false all-clear.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const dir = path.dirname(p);
@@ -3239,6 +3241,13 @@ function main() {
       );
       const dirt = classifyDirt(typeof flags.porcelain === 'string' ? flags.porcelain : '', taskFiles);
       const base = detectBase(typeof flags.branches === 'string' ? flags.branches : '');
+      let loci = [], lociError = null;
+      try {
+        const MAIN = path.resolve(dir, '../../..');
+        const slug = state.slug ?? path.basename(dir);
+        const WT = state.worktree ?? worktreePathFor(MAIN, slug);
+        loci = finishLocusFacts(state, { MAIN, WT, slug }, readEventsSafe(dir));
+      } catch (e) { loci = null; lociError = e.message; }
       const retroPresent = fs.existsSync(path.join(dir, 'retro.md'));
       const verifiedSha = state.verified_sha ?? null;
       // The branch_finish RE-ENTRY shortcut: a retirement disposition means the gate already resolved
@@ -3266,6 +3275,8 @@ function main() {
       const rawReview = state.review?.adversary ?? state.codex?.review;
       const adversaryReview = rawReview === true || rawReview === 'on' || rawReview === 'true';
       out({
+        loci,
+        ...(lociError ? { loci_error: lociError } : {}),
         task_scope_dirty: dirt.taskScopeDirty,
         unrelated_dirty: dirt.unrelatedDirty,
         task_scope_paths: dirt.taskScopePaths,

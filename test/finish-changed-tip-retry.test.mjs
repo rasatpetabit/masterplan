@@ -2,8 +2,8 @@
 // re-review blocker): a recorded retirement's crash-replay exemption must prove it replays
 // the RECORDED tip, not merely that a record exists.
 //
-// Reproduction being pinned: verify at A, reach branch_finish, answer merge with an
-// untracked file in the worktree → A lands, the removal fails (the supported failure path),
+// Reproduction being pinned: verify at A, reach branch_finish, answer merge with a
+// locked clean worktree → A lands, the removal fails (the supported failure path),
 // branch_finish_intent/branch_finish for A are recorded, disposition stays active. Commit in
 // the surviving worktree (branch now at B). A retry must NOT land and tear down B: without
 // the guard, B was merged, the worktree removed, and only the later deploy-boundary check
@@ -114,9 +114,9 @@ function mkFixture({ slug = 'fctr' } = {}) {
   return { tmp, MAIN, WT, bundleDir, statePath, step, verifyOut };
 }
 
-/** The reviewer's exact setup: verify at A, reach branch_finish, then answer merge with an
- * untracked file in the worktree — A lands, the removal fails, the retirement records for A
- * stand and the disposition stays active (the supported failure path). */
+/** Verify at A, reach branch_finish, then lock the clean worktree: A lands but removal fails.
+ * Dirty worktrees now refuse at preflight, so use a lock to reach the same retirement prefix.
+ * After the failed removal, unlock and add the original untracked file for the retry cases. */
 function driveToFailedRemoval(fx, slug) {
   const { WT, bundleDir, step, verifyOut } = fx;
   const headA = git(WT, 'rev-parse', 'HEAD');
@@ -127,7 +127,7 @@ function driveToFailedRemoval(fx, slug) {
   if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
   assert.equal(op.gate, 'branch_finish', JSON.stringify(op));
 
-  write(WT, 'scratch/untracked.txt', 'operator file\n'); // not task scope → blocks the removal
+  git(fx.MAIN, 'worktree', 'lock', WT);
   op = step({ choice: 'merge' });
   assert.equal(op.ask, 'dispatch-error', JSON.stringify(op));
   assert.match(op.error, /worktree removal failed/);
@@ -137,6 +137,8 @@ function driveToFailedRemoval(fx, slug) {
   assert.equal(retire.note, 'merge');
   assert.equal(retire.branch_tip, headA, 'the recorded retirement tip is A');
   assert.equal(readState(fx.statePath).worktree_disposition, 'active');
+  git(fx.MAIN, 'worktree', 'unlock', WT);
+  write(WT, 'scratch/untracked.txt', 'operator file\n');
   return { headA };
 }
 

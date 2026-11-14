@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Route absolute task files in repositories beside MAIN through per-run external worktrees
   with absolute namespaces for capture, scope checks, commits, and crash recovery. Recovery
   never falls back to those repositories' main checkouts, and review uses each task's own
-  dispatch HEAD (with legacy wave-base fallback). External finish-time integration remains
-  pending brief B.
+  dispatch HEAD (with legacy wave-base fallback).
+- Finish now integrates every umbrella/external repository locus under the same `branch_finish`
+  answer, showing each branch's tip, base, ahead count and worktree state. All not-yet-landed
+  repositories are preflighted before any merge; per-locus landing intents make partial
+  integration and teardown replay-safe. Keep/discard cover every locus; PR disposition refuses
+  runs with commits ahead in other repositories. Verification and deploy/version gates remain
+  run-worktree-only; sweep and publication are unchanged.
 
 ## [10.1.0] — 2026-10-15
 
