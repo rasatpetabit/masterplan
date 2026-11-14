@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import { finishStep } from '../lib/finish-step.mjs';
-import { preflightFinishLoci, finishOtherLoci } from '../lib/finish-loci.mjs';
+import { preflightFinishLoci, finishOtherLoci, ownsMergeInProgress } from '../lib/finish-loci.mjs';
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { readState, writeState, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -1994,6 +1994,36 @@ for (const dirt of ['tracked', 'staged', 'untracked']) test(`F5: overlapping ${d
   assert.deepEqual(readEvents(fx.bundleDir), events);
   assert.equal(fs.readFileSync(path.join(ext.main, rel), 'utf8'), bytes);
   assert.equal(git(ext.main, 'status', '--porcelain'), status);
+});
+
+test('F5: an ignored EXT main file at a path the merge adds is refused and keeps its bytes', () => {
+  // git merge treats ignored files as expendable and would overwrite them.
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  fs.appendFileSync(path.join(ext.main, '.git', 'info', 'exclude'), 'new.txt\n');
+  write(ext.wt, 'new.txt', 'branch file\n');
+  git(ext.wt, 'add', '-f', 'new.txt');
+  git(ext.wt, 'commit', '-qm', 'branch adds an ignored path');
+  write(ext.main, 'new.txt', 'operator ignored bytes\n');
+  const heads = [git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'HEAD')];
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /uncommitted changes.*merge paths/);
+  assert.ok(op.error.includes('new.txt'), op.error);
+  assert.deepEqual([git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'HEAD')], heads);
+  assert.equal(fs.readFileSync(path.join(ext.main, 'new.txt'), 'utf8'), 'operator ignored bytes\n');
+});
+
+test('F5: only a merge of this tip is owned by finish; an operator merge that appears later is not', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  assert.equal(ownsMergeInProgress(ext.main, ext.tip), false, 'no merge in progress');
+  const { marker, mergeHead } = beginOperatorMerge(ext);
+  assert.equal(ownsMergeInProgress(ext.main, ext.tip), false, 'operator merge of another commit');
+  assert.equal(fs.readFileSync(marker, 'utf8'), mergeHead);
+  fs.writeFileSync(marker, `${ext.tip}\n`);
+  assert.equal(ownsMergeInProgress(ext.main, ext.tip), true, 'a merge of the preflighted tip');
 });
 
 for (const tracked of [false, true]) test(`F5: unrelated ${tracked ? 'tracked' : 'untracked'} EXT main dirt survives a successful merge`, () => {

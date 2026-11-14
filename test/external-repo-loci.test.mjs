@@ -319,6 +319,20 @@ test('blocker R1: undeclared EXT main changes, including commits, are ignored', 
   assert.equal(fs.readFileSync(path.join(fx.EXT, 'unrelated.rs'), 'utf8'), 'other session\n');
 });
 
+for (const kind of ['mode', 'index']) {
+  test(`blocker R1: a ${kind}-only change to a declared EXT main file is reported`, async (t) => {
+    // Same bytes, different file: an executable bit, or a staged copy of existing dirt.
+    const fx = fixture(t);
+    if (kind === 'index') write(fx.EXT, 'src/a.rs', 'another session dirt\n');
+    await launch(fx);
+    if (kind === 'mode') fs.chmodSync(fx.source, 0o755);
+    else git(fx.EXT, 'add', 'src/a.rs');
+    const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: result() });
+    assert.ok(recorded.watch.violations.some((v) => v.repo === fx.EXT && v.rel === 'src/a.rs' && v.restore === null),
+      JSON.stringify(recorded.watch));
+  });
+}
+
 test('blocker R1: a declared clean file committed in EXT main is still detected', async (t) => {
   const fx = fixture(t);
   await launch(fx);
