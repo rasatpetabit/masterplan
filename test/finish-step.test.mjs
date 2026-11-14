@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import { finishStep } from '../lib/finish-step.mjs';
+import { preflightFinishLoci, finishOtherLoci } from '../lib/finish-loci.mjs';
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { readState, writeState, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -1487,7 +1488,7 @@ for (const choice of ['merge', 'discard']) test(`armed review teardown recovers 
 });
 
 // A real second repository BESIDE the bundle repository, not an umbrella child.
-function addFinishLocus(fx, { name = 'EXT', nested = false } = {}) {
+function addFinishLocus(fx, { name = 'EXT', nested = false, files = {} } = {}) {
   const main = path.join(nested ? fx.MAIN : fx.tmp, name);
   fs.mkdirSync(main, { recursive: true });
   git(main, 'init', '--initial-branch=main');
@@ -1496,6 +1497,7 @@ function addFinishLocus(fx, { name = 'EXT', nested = false } = {}) {
   git(main, 'config', 'commit.gpgsign', 'false');
   write(main, '.gitignore', '.worktrees/\n');
   write(main, 'a.txt', 'seed\n');
+  for (const [rel, content] of Object.entries(files)) write(main, rel, content);
   git(main, 'add', '.');
   git(main, 'commit', '-qm', 'external seed');
   const slug = readState(fx.statePath).slug;
@@ -1801,4 +1803,241 @@ test('multi-repo finish: replay before EXT intent recovers the landing, not a la
   assert.equal(git(ext.main, 'rev-parse', 'HEAD'), later);
   const intent = readEvents(fx.bundleDir).find((e) => e.type === 'locus_finish_intent');
   assert.equal(intent.merge_sha, landing);
+});
+
+// Brief D regressions: real repositories, splitting preflight/merge only to inject races.
+test('F1: containing non-base checkout is not a landing and cannot retire EXT', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  git(ext.main, 'checkout', '-qb', 'other', ext.tip);
+  const before = [git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'main')];
+  assert.equal(fx.step().loci[0].landed, false);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /merge target mismatch/);
+  assert.deepEqual([git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'main')], before);
+  assert.equal(git(ext.main, 'rev-parse', ext.branch), ext.tip);
+  assert.ok(fs.existsSync(ext.wt));
+});
+
+test('F1: replay recovers the base landing even with a different containing HEAD', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  git(ext.main, 'merge', '--no-ff', '--no-edit', '-m', 'base landing', ext.tip);
+  const landing = git(ext.main, 'rev-parse', 'HEAD');
+  git(ext.main, 'checkout', '-qb', 'other', `${ext.tip}^`);
+  git(ext.main, 'merge', '--no-ff', '--no-edit', '-m', 'other landing', ext.tip);
+  const other = git(ext.main, 'rev-parse', 'HEAD');
+  assert.notEqual(other, landing);
+  assert.equal(fx.step({ choice: 'merge' }).reason, 'archived');
+  assert.equal(git(ext.main, 'rev-parse', 'HEAD'), other);
+  assert.equal(readEvents(fx.bundleDir).find((e) => e.type === 'locus_finish_intent').merge_sha, landing);
+});
+
+test('F2: sole dirty run keeps legacy merge-then-failed-removal handling', () => {
+  const fx = makeFixture({ state: { worktree_disposition: 'active' } });
+  walkToGate(fx);
+  const tip = git(fx.WT, 'rev-parse', 'HEAD');
+  write(fx.WT, 'untracked.txt', 'preserved dirty run\n');
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /worktree removal failed/i);
+  assertAncestor(fx.MAIN, tip);
+  assert.equal(readState(fx.statePath).worktree_disposition, 'active');
+  assert.ok(fs.existsSync(fx.WT));
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'untracked.txt'), 'utf8'), 'preserved dirty run\n');
+});
+
+test('F2: multi-locus preflight leaves run dirt to legacy teardown', () => {
+  const fx = makeFixture({ state: { worktree_disposition: 'active' } });
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  const tip = git(fx.WT, 'rev-parse', 'HEAD');
+  write(fx.WT, 'untracked.txt', 'dirty run\n');
+  const op = fx.step({ choice: 'merge' });
+  assert.match(op.error, /worktree removal failed/i);
+  assertAncestor(fx.MAIN, tip);
+  assertAncestor(ext.main, ext.tip);
+  assertLocusRemoved(ext);
+  assert.equal(readState(fx.statePath).worktree_disposition, 'active');
+});
+
+test('F3: EXT tip moved after preflight is refused before its merge', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  const verified = preflightFinishLoci([ext], []);
+  assert.notEqual(typeof verified, 'string');
+  write(ext.wt, 'extra.txt', 'unverified commit\n');
+  git(ext.wt, 'add', '.');
+  git(ext.wt, 'commit', '-qm', 'advanced after preflight');
+  const before = git(ext.main, 'rev-parse', 'HEAD');
+  const events = [];
+  const error = finishOtherLoci({ choice: 'merge' }, [ext], [], (e) => events.push(e), verified);
+  assert.equal(typeof error, 'string');
+  assert.ok(error.includes(ext.main), error);
+  assert.match(error, /tip.*(?:moved|changed).*preflight/i);
+  assert.equal(git(ext.main, 'rev-parse', 'HEAD'), before);
+  assert.deepEqual(events, []);
+  assert.ok(fs.existsSync(ext.wt));
+});
+
+test('F4: unavailable EXT stays in gate and status and refuses pr', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  git(ext.main, 'worktree', 'remove', ext.wt);
+  git(ext.main, 'branch', '-D', ext.branch);
+  const gate = fx.step();
+  assert.equal(gate.loci.length, 1);
+  assert.equal(gate.loci[0].main, ext.main);
+  assert.equal(gate.loci[0].unavailable, true);
+  assert.match(gate.loci[0].reason, /branch tip.*(?:unavailable|resolved)/);
+  const status = JSON.parse(execFileSync(process.execPath, [path.resolve('bin/masterplan.mjs'),
+    'finish-status', `--state=${fx.statePath}`], { encoding: 'utf8' }));
+  assert.deepEqual(status.loci, gate.loci);
+  const events = readEvents(fx.bundleDir);
+  const op = fx.step({ choice: 'pr' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /unavailable/);
+  assert.ok(op.error.includes(ext.main), op.error);
+  assert.equal(readState(fx.statePath).pending_gate.id, 'branch_finish');
+  assert.deepEqual(readEvents(fx.bundleDir), events);
+});
+
+for (const choice of ['keep', 'discard']) test(`F4: ${choice} records an unavailable EXT`, () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  git(ext.main, 'worktree', 'remove', ext.wt);
+  git(ext.main, 'branch', '-D', ext.branch);
+  assert.equal(fx.step({ choice }).reason, 'archived');
+  const event = readEvents(fx.bundleDir).find((e) => e.type === 'locus_finish');
+  assert.equal(event.main, ext.main);
+  assert.equal(event.note, choice);
+  assert.equal(event.branch_tip, null);
+  assert.equal(event.unavailable, true);
+  assert.match(event.reason, /branch tip/);
+});
+
+function beginOperatorMerge(ext) {
+  write(ext.main, 'operator.txt', 'operator seed\n');
+  git(ext.main, 'add', 'operator.txt');
+  git(ext.main, 'commit', '-qm', 'operator seed');
+  git(ext.main, 'checkout', '-qb', 'operator');
+  write(ext.main, 'operator.txt', 'operator branch\n');
+  git(ext.main, 'commit', '-qam', 'operator branch');
+  git(ext.main, 'checkout', 'main');
+  write(ext.main, 'operator.txt', 'operator base\n');
+  git(ext.main, 'commit', '-qam', 'operator base');
+  assert.throws(() => git(ext.main, 'merge', 'operator'));
+  const marker = path.join(ext.main, '.git', 'MERGE_HEAD');
+  return { marker, mergeHead: fs.readFileSync(marker, 'utf8') };
+}
+
+test('F5: operator merge in EXT is refused and its MERGE_HEAD survives', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  const { marker, mergeHead } = beginOperatorMerge(ext);
+  const before = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.equal(fs.readFileSync(marker, 'utf8'), mergeHead);
+  assert.match(op.error, /MERGE_HEAD/);
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), before);
+});
+
+for (const marker of ['rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG']) {
+  test(`F5: preflight refuses EXT operation marker ${marker}`, () => {
+    const fx = makeFixture();
+    const ext = addFinishLocus(fx);
+    walkToGate(fx);
+    const target = path.join(ext.main, '.git', marker);
+    if (marker.startsWith('rebase-')) fs.mkdirSync(target);
+    else fs.writeFileSync(target, `${ext.tip}\n`);
+    const before = git(fx.MAIN, 'rev-parse', 'HEAD');
+    const op = fx.step({ choice: 'merge' });
+    assert.equal(op.ask, 'dispatch-error');
+    assert.ok(op.error.includes(marker), op.error);
+    assert.ok(fs.existsSync(target));
+    assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), before);
+  });
+}
+
+for (const dirt of ['tracked', 'staged', 'untracked']) test(`F5: overlapping ${dirt} EXT main dirt is refused before either merge`, () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  walkToGate(fx);
+  const rel = dirt === 'untracked' ? 'new.txt' : 'a.txt';
+  if (dirt === 'untracked') {
+    write(ext.wt, rel, 'branch file\n');
+    git(ext.wt, 'add', rel);
+    git(ext.wt, 'commit', '-qm', 'branch adds file');
+  }
+  write(ext.main, rel, 'operator dirty bytes\n');
+  if (dirt === 'staged') {
+    git(ext.main, 'add', rel);
+    // Include index dirt even when the worktree bytes match HEAD.
+    write(ext.main, rel, 'seed\n');
+  }
+  const bytes = fs.readFileSync(path.join(ext.main, rel), 'utf8');
+  const status = git(ext.main, 'status', '--porcelain');
+  const heads = [git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'HEAD')];
+  const events = readEvents(fx.bundleDir);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /uncommitted changes.*merge paths/);
+  assert.ok(op.error.includes(rel), op.error);
+  assert.deepEqual([git(fx.MAIN, 'rev-parse', 'HEAD'), git(ext.main, 'rev-parse', 'HEAD')], heads);
+  assert.deepEqual(readEvents(fx.bundleDir), events);
+  assert.equal(fs.readFileSync(path.join(ext.main, rel), 'utf8'), bytes);
+  assert.equal(git(ext.main, 'status', '--porcelain'), status);
+});
+
+for (const tracked of [false, true]) test(`F5: unrelated ${tracked ? 'tracked' : 'untracked'} EXT main dirt survives a successful merge`, () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx, { files: tracked ? { 'unrelated.txt': 'original\n' } : {} });
+  walkToGate(fx);
+  write(ext.main, 'unrelated.txt', 'operator dirty bytes\n');
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  assertAncestor(ext.main, ext.tip);
+  assert.equal(fs.readFileSync(path.join(ext.main, 'unrelated.txt'), 'utf8'), 'operator dirty bytes\n');
+  assert.equal(git(ext.main, 'status', '--porcelain'), tracked ? 'M unrelated.txt' : '?? unrelated.txt');
+});
+
+test('F5: merge failure never aborts an operator merge started after preflight', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  const verified = preflightFinishLoci([ext], []);
+  assert.notEqual(typeof verified, 'string');
+  const { marker, mergeHead } = beginOperatorMerge(ext);
+  const before = git(ext.main, 'rev-parse', 'HEAD');
+  const events = [];
+  const error = finishOtherLoci({ choice: 'merge' }, [ext], [], (e) => events.push(e), verified);
+  assert.equal(typeof error, 'string');
+  assert.equal(fs.readFileSync(marker, 'utf8'), mergeHead);
+  assert.equal(git(ext.main, 'rev-parse', 'HEAD'), before);
+  assert.ok(fs.existsSync(ext.wt));
+  assert.deepEqual(events, []);
+});
+
+test('F5: a conflict created by this finish merge is still aborted', () => {
+  const fx = makeFixture();
+  const ext = addFinishLocus(fx);
+  const verified = preflightFinishLoci([ext], []);
+  assert.notEqual(typeof verified, 'string');
+  write(ext.main, 'a.txt', 'conflicting change after preflight\n');
+  git(ext.main, 'commit', '-qam', 'concurrent base commit');
+  const before = git(ext.main, 'rev-parse', 'HEAD');
+  const events = [];
+  const error = finishOtherLoci({ choice: 'merge' }, [ext], [], (e) => events.push(e), verified);
+  assert.match(error, /merge.*failed/);
+  assert.equal(fs.existsSync(path.join(ext.main, '.git', 'MERGE_HEAD')), false);
+  assert.equal(git(ext.main, 'rev-parse', 'HEAD'), before);
+  assert.equal(git(ext.main, 'status', '--porcelain'), '');
+  assert.ok(fs.existsSync(ext.wt));
+  assert.deepEqual(events, []);
 });

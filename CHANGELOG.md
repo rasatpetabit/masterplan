@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Harden multi-repository finish against non-base false landings, moved preflight tips, missing loci, and operator main-checkout work; keep single-repository and run-worktree dirty-teardown handling unchanged.
 - Protect sibling/external main checkouts against wave changes to declared paths without auto-restoring another session's bytes; ignore undeclared changes there.
 - Record committed recovery against its frozen single run edit locus, including sibling/external worktrees, never a main checkout.
 - Fail recording before any state write or commit when a declared sibling/external run worktree is missing; only provisional launch baselines may skip it.
