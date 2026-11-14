@@ -95,6 +95,13 @@ the returned plan with its parallel subagent API.
    rewrites matching verify path tokens, auto-opts `create_files: true` when any target is
    missing on disk, and stamps `branch: masterplan/<slug>`. Mixed-repo tasks throw loud —
    one task = one locus (gateway dispatch is single-repo per descriptor).
+   Absolute files in repositories beside MAIN are **external loci**: their namespace is the
+   absolute main-checkout root, their run worktree is `<repo>/.worktrees/<slug>` on
+   `masterplan/<slug>`, and capture/scope/commit/reset round-trip through that namespace.
+   Inputs inside that run worktree resolve to the same namespace; other linked worktrees
+   are refused. Recovery skips missing run worktrees instead of resetting main checkouts.
+   Review freezes each task's own edit-locus HEAD (`task.base_sha ?? review_context.base_sha`
+   for old records). Finish-time integration of external loci is pending brief B.
 3. **Wave-dispatch idempotency** — a stable key `(run_id, wave, 'dispatch_fabric')` over a
    per-wave record file inside the bundle (`wave-<N>.dispatch.json`), persisted **before** the
    launch with atomic create-or-return-existing (O_EXCL) semantics. A retry after an

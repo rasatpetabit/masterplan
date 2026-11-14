@@ -1535,3 +1535,31 @@ for (const carrier of ['input', 'deferred']) {
     for (const [p, bytes] of hb) assert.equal(fs.readFileSync(path.join(fx.bundleDir, p), 'utf8'), bytes);
   });
 }
+
+test('recovery: per-task frozen base wins over the legacy wave base in controller and recorder', async () => {
+  const fx = makeRecoveryFixture({ recordable: true });
+  try {
+    const ctx = fx.record.review_context;
+    ctx.tasks = ctx.tasks.map((task) => ({ ...task, base_sha: fx.BASE }));
+    ctx.base_sha = '0'.repeat(40); // deliberately absent in this object database
+    writeWaveDispatchRecord(fx.bundleDir, 1, fx.record);
+    const pending = await runPhaseA(fx);
+    const identity = pending.pending_reviews[0].identity;
+    assert.equal(identity.base, fx.BASE);
+    const reviewed = await runPhaseA(fx, { providedReviews: { 1: boundReceipt(fx, identity) } });
+    const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 4000,
+      result: reviewed, deferredEvents: reviewed.deferred_review_events,
+      recovery: true, recoverySelector: { repo: fx.WT, head: fx.HEAD } });
+    assert.equal(recorded.outcome, 'recorded', JSON.stringify(recorded));
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.HEAD);
+  } finally { fs.rmSync(fx.tmp, { recursive: true, force: true }); }
+});
+
+test('recovery: adding per-task bases does not rewrite legacy context fingerprints', () => {
+  const ctx = { enabled: true, base_sha: 'a'.repeat(40), tasks: [{ task_id: 1, repo: '/x' }] };
+  const legacy = { enabled: true, base_sha: ctx.base_sha,
+    tasks: [{ task_id: 1, description: null, class: null, repo: '/x' }] };
+  assert.equal(fingerprintReviewContext(ctx), sha256hex(stableStringify(legacy)));
+  assert.notEqual(fingerprintReviewContext(ctx), fingerprintReviewContext({ ...ctx,
+    tasks: [{ ...ctx.tasks[0], base_sha: 'b'.repeat(40) }] }));
+});

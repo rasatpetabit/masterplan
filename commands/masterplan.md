@@ -374,6 +374,12 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
    - **WT** = `<MAIN>/.worktrees/<slug>`, the per-run **code** worktree on branch `masterplan/<slug>`.
      Holds CODE ONLY — the branch never commits the bundle dir, so `merge masterplan/<slug> → base` at
      finish is conflict-free (base's already-advanced bundle wins; no re-point).
+   - **External loci**: absolute task paths in repositories beside MAIN use the repository's
+     absolute main-checkout root as their namespace and `<repo>/.worktrees/<slug>` on
+     `masterplan/<slug>` as their edit/commit/reset locus. Other linked worktrees are refused;
+     recovery skips a missing run worktree, never falling back to that repository's main checkout.
+     Each task freezes its own locus HEAD for review. Finish-time integration of external loci
+     is pending brief B; the finish flow below is unchanged.
    - Derivations (deterministic, mirror `lib/worktree.mjs`): `WT=<MAIN>/.worktrees/<slug>`;
      `branch=masterplan/<slug>`; `branchExists` ⇔ `git -C "<MAIN>" rev-parse --verify --quiet
      refs/heads/masterplan/<slug>` exits 0.

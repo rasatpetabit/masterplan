@@ -251,14 +251,17 @@ test('recover_wave: mixed in-WT + external-repo scope resets each repo with its 
   git(fx.MAIN, 'worktree', 'add', '-q', '-b', 'masterplan/t23ext', WT);
   writeState(fx.statePath, { ...readState(fx.statePath), worktree: WT });
   write(WT, 'src/a.txt', 'half-finished\n'); // partial in-WT edit (untracked)
-  write(EXT, 'ext.mjs', 'half-finished-external\n'); // partial external edit (untracked)
+  const extWT = path.join(EXT, '.worktrees', 't23ext');
+  git(EXT, 'worktree', 'add', '-q', '-b', 'masterplan/t23ext', extWT);
+  write(extWT, 'ext.mjs', 'half-finished-external\n'); // partial external worktree edit (untracked)
 
   // Phase-1 marker (no task_id) → no reap probe; straight to reset + re-dispatch.
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, alive: false });
   assert.equal(op.op, 'dispatch_fabric', 'reset + re-dispatch succeeds (no "outside the repository")');
   assert.equal(op.wave, 1);
   assert.equal(fs.existsSync(path.join(WT, 'src/a.txt')), false, 'in-WT partial cleaned by the worktree git');
-  assert.equal(fs.existsSync(extAbs), false, 'external partial cleaned by the external repo git, not the worktree git');
+  assert.equal(fs.existsSync(path.join(extWT, 'ext.mjs')), false, 'external partial cleaned in the external run worktree');
+  assert.equal(fs.existsSync(extAbs), false, 'external main checkout was never edited');
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.phase, 'launching', 'fresh phase-1 marker re-issued');
 });
