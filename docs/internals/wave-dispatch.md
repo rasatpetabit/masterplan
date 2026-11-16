@@ -211,7 +211,10 @@ by an earlier `recorded` attempt whose `record_outcome.recorded` includes them a
 durable, eligible, nonblocking task-review event matches the frozen base and episode are
 exempt from the new recording transaction, provided their declared files match the owning
 attempt's stored `record_outcome.commits.code_by_repo` baseline (absolute repository keys)
-and have no index or working-tree changes at every locus (missing legacy baselines refuse),
+and have no index or working-tree changes at every locus (a missing legacy baseline is admitted
+only in the owning review repository when exactly one ancestor of HEAD is a direct child of the
+owning frozen base and its object-only rebuild, tracked diff then sorted per-addition diffs,
+hashes to that task's durable base-and-episode-bound review artifact; otherwise it refuses),
 except files shared with a current-attempt task undergoing artifact authorization; old receipts never authorize new
 episodes. Changed exempt-task files or in-scope paths outside task declarations refuse recording
 with a fresh-episode-review requirement rather than silently narrowing staging.

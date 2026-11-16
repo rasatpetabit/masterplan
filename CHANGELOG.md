@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Record and complete waves whose tasks finish across multiple dispatch attempts by resolving
   each task's newest owning attempt. Preserve earlier recorded work only with durable review
   evidence and unchanged declared files (stored per-repository code baseline plus index and
-  working tree; missing legacy baselines refuse), except
+  working tree; a missing legacy baseline requires a unique direct child of the owning frozen
+  base in HEAD's ancestry, in the owning review repository, whose object-only artifact rebuild
+  exactly matches the durable episode-bound review hash), except
   files shared with a currently reviewed task; missing or ineligible newer episodes never fall
   back to older approval.
 

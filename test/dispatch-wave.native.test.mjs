@@ -31,6 +31,7 @@ import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult, authorizeRecording } from '../lib/wave-commit.mjs';
+import { captureFullWorkingDiff, rebuildFullWorkingDiff } from '../lib/working-diff.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 import { resolveTaskReviewAttempt, taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
@@ -1770,12 +1771,13 @@ function crossAttemptRecord(fx, result, reviews = null) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
-async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false } = {}) {
+async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
     tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
   } });
   const state = readState(fx.statePath);
+  if (mixedArtifact) state.tasks[0].files.push('src/seed.txt');
   if (external) {
     // A repository beside MAIN, not a directory inside the run worktree.
     const sibling = path.join(fx.tmp, 'sibling');
@@ -1783,14 +1785,23 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
     git(sibling, 'config', 'user.email', 'test@test');
     git(sibling, 'config', 'user.name', 'test');
     git(sibling, 'config', 'commit.gpgsign', 'false');
-    state.tasks[0].files = [path.join(sibling, 'src/1.txt')];
-    writeState(fx.statePath, state);
+    state.tasks[0].files = state.tasks[0].files.map((f) => path.join(sibling, f));
   }
+  writeState(fx.statePath, state);
   write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: state.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
   launchNative(fx);
   await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   fx.aRepo = readWaveDispatchRecord(fx.bundleDir, 1).review_context.tasks[0].repo;
+  if (wrongParent) {
+    // Same tree but disconnected ancestry: the reviewed bytes still match B..C,
+    // so only the explicit parent check can prevent adopting this new root.
+    const base = git(fx.aRepo, 'rev-parse', 'HEAD');
+    const unrelated = git(fx.aRepo, 'commit-tree', base + '^{tree}', '-m', 'unrelated root');
+    git(fx.aRepo, 'reset', '--soft', unrelated);
+  }
   write(fx.aRepo, 'src/1.txt', 'A complete\n');
+  if (mixedArtifact) write(fx.aRepo, 'src/seed.txt', 'A tracked modification\n');
+  if (reviewPartial) write(fx.WT, 'src/2.txt', 'B partial at A review\n');
   const firstResult = { wave: 1, tasks: [
     { task_id: 1, digest: workerDigest(1) }, { task_id: 2, digest: workerDigest(2, 'blocked') },
   ] };
@@ -1959,8 +1970,13 @@ test('cross-attempt: missing trusted baseline refuses legacy record with actiona
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
   const owner = record.history[0];
   // Same legacy outcome fields as the live example; retain the genuine frozen
-  // base, code commit (whose parent is that base), durable review and state commit.
+  // base, durable review and state commit, but substitute an unreviewed child.
   delete owner.record_outcome.commits;
+  // A substituted direct child has one byte beyond the durable review.
+  write(fx.aRepo, 'src/1.txt', 'A complete\n!');
+  git(fx.aRepo, 'add', '--', 'src/1.txt');
+  git(fx.aRepo, 'commit', '--amend', '--no-edit', '-q');
+  fx.aCommit = git(fx.aRepo, 'rev-parse', 'HEAD');
   assert.deepEqual(Object.keys(owner.record_outcome).sort(), ['cleared', 'failed', 'recorded']);
   assert.equal(git(fx.aRepo, 'rev-parse', fx.aCommit + '^'), owner.review_context.tasks[0].base_sha);
   assert.ok(x22Events(fx).includes('task_adversary_review'));
@@ -1980,6 +1996,137 @@ test('cross-attempt: missing trusted baseline refuses legacy record with actiona
   assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain);
   assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeRun);
   assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), fx.aCommit);
+});
+
+test('cross-attempt: object rebuild equals capture on replay with unusual additions and deletion', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-artifact-'));
+  const repo = path.join(tmp, 'repo');
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 'test@test');
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  // Pin rename detection on, not off: deleted tracked + identical untracked
+  // must NOT be paired, unlike an ordinary combined committed diff.
+  git(repo, 'config', 'diff.renames', 'true');
+  write(repo, 'z modified.txt', 'before\n');
+  write(repo, 'deleted.txt', 'identical content for potential rename\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-qm', 'base');
+  const base = git(repo, 'rev-parse', 'HEAD');
+  write(repo, 'z modified.txt', 'after\n');
+  fs.unlinkSync(path.join(repo, 'deleted.txt'));
+  const additions = ['a new with spaces.txt', 'tab\tname', 'new\nline', 'quote"name',
+    'nonascii-é', '[glob].txt', ':(magic).txt'];
+  for (const f of additions) write(repo, f, 'addition\n');
+  write(repo, 'a renamed.txt', 'identical content for potential rename\n');
+  const original = captureFullWorkingDiff(repo, undefined, base);
+  assert.ok(original.indexOf('z modified.txt') < original.indexOf('a new with spaces.txt'), 'tracked before additions, not commit order');
+  assert.match(original, /deleted file mode/);
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-qm', 'recorded');
+  const candidate = git(repo, 'rev-parse', 'HEAD');
+  const replay = path.join(tmp, 'replay');
+  git(repo, 'worktree', 'add', '-q', '--detach', replay, candidate);
+  git(replay, 'reset', '--mixed', '-q', base); // Recreate reviewed layout; additions untracked.
+  const replayed = captureFullWorkingDiff(replay, undefined, base);
+  assert.equal(replayed, original);
+  const indexPath = git(replay, 'rev-parse', '--path-format=absolute', '--git-path', 'index');
+  const beforeIndex = fs.readFileSync(indexPath);
+  const beforeStatus = git(replay, '--no-optional-locks', 'status', '--porcelain=v2', '-z');
+  const calls = [];
+  const rebuilt = rebuildFullWorkingDiff(replay, base, candidate, (command, args, opts) => {
+    calls.push(args);
+    assert.equal(command, 'git');
+    assert.deepEqual(args.slice(0, 4), ['-C', replay, '-c', 'core.quotePath=false']);
+    assert.equal(args[4] === '--literal-pathspecs' ? args[5] : args[4], 'diff', 'object plumbing only');
+    return execFileSync(command, args, opts);
+  });
+  assert.equal(Buffer.compare(Buffer.from(rebuilt), Buffer.from(replayed)), 0, 'same artifact bytes');
+  assert.equal(calls.length, additions.length + 4); // classification x2, tracked, each addition (+rename-like).
+  assert.deepEqual(fs.readFileSync(indexPath), beforeIndex, 'no index write');
+  assert.equal(git(replay, 'rev-parse', 'HEAD'), base, 'no ref write');
+  assert.equal(git(replay, '--no-optional-locks', 'status', '--porcelain=v2', '-z'), beforeStatus);
+});
+
+// Legacy baselines must be proven from the owning episode's durable artifact,
+// not inferred from the new dispatch base or from a clean current checkout.
+function makeLegacy(fx) {
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  delete record.history[0].record_outcome.commits;
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  return record;
+}
+for (const external of [false, true]) {
+  test(`cross-attempt: legacy exact artifact records; A unchanged (${external ? 'sibling' : 'run repo'})`, async () => {
+    const fx = await crossAttemptFixture({ external, mixedArtifact: true });
+    makeLegacy(fx);
+    const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+    assert.deepEqual(out.recorded, [2]);
+    assert.equal(out.cleared, true);
+    assert.equal(git(fx.aRepo, 'log', '-1', '--format=%H', '--', 'src/1.txt', 'src/seed.txt'), fx.aCommit);
+    assert.equal(fs.readFileSync(path.join(fx.aRepo, 'src/1.txt'), 'utf8'), 'A complete\n');
+    assert.equal(fs.readFileSync(path.join(fx.aRepo, 'src/seed.txt'), 'utf8'), 'A tracked modification\n');
+  });
+}
+for (const scenario of ['blocked partial in artifact', 'parent is not frozen base', 'committed drift after C']) {
+  test(`cross-attempt: legacy refuses ${scenario}`, async () => {
+    const fx = await crossAttemptFixture({ reviewPartial: scenario === 'blocked partial in artifact',
+      wrongParent: scenario === 'parent is not frozen base' });
+    makeLegacy(fx);
+    if (scenario === 'committed drift after C') {
+      write(fx.aRepo, 'src/1.txt', 'A unreviewed after C\n');
+      git(fx.aRepo, 'add', '--', 'src/1.txt');
+      git(fx.aRepo, 'commit', '-qm', 'drift after C');
+    }
+    const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+    const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
+    const beforeHead = git(fx.aRepo, 'rev-parse', 'HEAD');
+    const beforeStatus = git(fx.aRepo, 'status', '--porcelain');
+    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+      assert.equal(err.status, 2);
+      assert.match(String(err.stderr), scenario === 'committed drift after C'
+        ? /task 1:.*changed files src\/1\.txt.*fresh review/
+        : /task 1:.*missing trusted recorded code baseline.*fresh review/);
+      return true;
+    });
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+    assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain);
+    assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), beforeHead);
+    assert.equal(git(fx.aRepo, 'status', '--porcelain'), beforeStatus);
+  });
+}
+
+test('cross-attempt: legacy refuses ambiguous direct children even with a matching preferred base', async () => {
+  const fx = await crossAttemptFixture();
+  const record = makeLegacy(fx);
+  const base = record.history[0].review_context.tasks[0].base_sha;
+  assert.equal(record.review_context.tasks[0].base_sha, fx.aCommit);
+  const other = git(fx.aRepo, 'commit-tree', base + '^{tree}', '-p', base, '-m', 'other direct child');
+  const merged = git(fx.aRepo, 'commit-tree', fx.aCommit + '^{tree}', '-p', fx.aCommit, '-p', other, '-m', 'merge children');
+  git(fx.aRepo, 'reset', '--soft', merged);
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.match(String(err.stderr), /task 1:.*missing trusted recorded code baseline/);
+    return true;
+  });
+  assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), merged);
+});
+
+test('cross-attempt: legacy refuses declared files outside the owning review repository', async () => {
+  const fx = await crossAttemptFixture();
+  makeLegacy(fx);
+  // Even the exact same objects in another locus do not make it the reviewed repo.
+  const other = path.join(fx.tmp, 'other');
+  execFileSync('git', ['clone', '-q', '--no-checkout', fx.aRepo, other], { stdio: 'pipe' });
+  git(other, 'checkout', '-q', fx.aCommit);
+  const state = readState(fx.statePath);
+  state.tasks[0].files.push(path.join(other, 'src/1.txt'));
+  writeState(fx.statePath, state);
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.match(String(err.stderr), /task 1:.*missing trusted recorded code baseline/);
+    assert.ok(String(err.stderr).includes(other));
+    return true;
+  });
 });
 
 test('cross-attempt: blocked B-only partial edits record and remain uncommitted', async () => {
