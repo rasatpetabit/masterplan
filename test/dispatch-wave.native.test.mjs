@@ -32,6 +32,7 @@ import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult, authorizeRecording } from '../lib/wave-commit.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
+import { resolveTaskReviewAttempt, taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
 test('native handoff keeps bounded-edit intent and never stamps a model', () => {
@@ -1109,6 +1110,7 @@ for (const partial of [false, true]) {
     if (partial) {
       const record = readWaveDispatchRecord(fx.bundleDir, 1);
       record.review_context.episodes['2'] = { subject: 'disposable-new-slot' };
+      record.tasks.push({ task_id: 2 }); // dispatched membership, not just an episode
       writeWaveDispatchRecord(fx.bundleDir, 1, record);
     }
     const before = fs.readFileSync(fx.statePath, 'utf8');
@@ -1751,3 +1753,197 @@ for (const restart of [false, true]) {
     });
   }
 }
+
+// Cross-attempt regression: use the CLI recorder so the real attempt finalizer runs.
+function crossAttemptRecord(fx, result, reviews = null) {
+  const resultFile = path.join(fx.tmp, 'result.json');
+  write(fx.tmp, 'result.json', JSON.stringify(result));
+  const args = ['record-result', `--state=${fx.statePath}`, `--result-file=${resultFile}`, '--now=3000'];
+  if (reviews) {
+    write(fx.tmp, 'reviews.json', JSON.stringify(reviews));
+    args.push(`--reviews-file=${path.join(fx.tmp, 'reviews.json')}`);
+  }
+  return JSON.parse(execFileSync(process.execPath,
+    [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+}
+async function crossAttemptFixture() {
+  const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
+    concurrency: { owner_lock: 'off' },
+    tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
+  } });
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: [1, 2].map((id) => planEntry(id, 1, [`src/${id}.txt`])) }));
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  write(fx.WT, 'src/1.txt', 'A complete\n');
+  const firstResult = { wave: 1, tasks: [
+    { task_id: 1, digest: workerDigest(1) }, { task_id: 2, digest: workerDigest(2, 'blocked') },
+  ] };
+  const phaseA = crossAttemptRecord(fx, firstResult);
+  assert.equal(phaseA.op, 'run_native_reviews');
+  assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [1]);
+  const first = crossAttemptRecord(fx, firstResult, { 1: x22Approval });
+  assert.deepEqual(first.recorded, [1]);
+  assert.deepEqual(first.failed.map((r) => r.id), [2]);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
+  fx.aCommit = git(fx.WT, 'rev-parse', 'HEAD');
+  // recover_wave re-routes only the still-pending blocked digest; no amendment needed.
+  launchNative(fx);
+  const second = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3000, policy: dispatchFixture });
+  assert.equal(second.record.attempt, 2);
+  assert.deepEqual(second.record.tasks.map((t) => t.task_id), [2]);
+  assert.deepEqual(Object.keys(second.record.review_context.episodes), ['2']);
+  write(fx.WT, 'src/2.txt', 'B complete\n');
+  fx.secondResult = { wave: 1, tasks: [{ task_id: 2, digest: workerDigest(2) }] };
+  return fx;
+}
+
+test('cross-attempt: phase B retry records only B and completion retains A', async () => {
+  const fx = await crossAttemptFixture();
+  const phaseA = crossAttemptRecord(fx, fx.secondResult);
+  assert.equal(phaseA.op, 'run_native_reviews');
+  assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [2]);
+  // Force a Phase B authorization refusal AFTER native ingestion, then restore
+  // the historical entry. This leaves the same durable prefix as the live bug:
+  // B's event appended, no state/code commit, current attempt still pending.
+  const saved = readWaveDispatchRecord(fx.bundleDir, 1);
+  const damaged = structuredClone(saved);
+  delete damaged.history[0].review_context.episodes['1'];
+  writeWaveDispatchRecord(fx.bundleDir, 1, damaged);
+  const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /task 1: no identifiable entry in active-episode receipt/);
+    return true;
+  });
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+  writeWaveDispatchRecord(fx.bundleDir, 1, saved);
+  const beforeEvents = x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+    .filter((e) => e.type === 'task_adversary_review');
+  assert.deepEqual(beforeEvents.map((e) => e.data.task), [1, 2]);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'pending');
+  const second = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+  assert.deepEqual(second.recorded, [2]);
+  assert.equal(second.cleared, true);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD^'), fx.aCommit);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/2.txt');
+  assert.equal(git(fx.WT, 'log', '-1', '--format=%H', '--', 'src/1.txt'), fx.aCommit);
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'A complete\n');
+  assert.equal(x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+    .filter((e) => e.type === 'task_adversary_review').length, 2, 'retry never duplicates B review');
+  const state = readState(fx.statePath);
+  assert.equal(taskEpisodeEligibleForCompletion(fx.statePath, state, state.tasks[0]), true);
+  const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 4000, policy: dispatchFixture });
+  assert.equal(next.op, 'run_skill');
+  assert.equal(next.skill, 'finish');
+  assert.equal(git(fx.WT, 'rev-list', '--count', `${fx.aCommit}..HEAD`), '1', 'no duplicate code commit');
+});
+
+function crossAttemptAuthorize(fx, options = {}) {
+  return authorizeRecording({ statePath: fx.statePath, state: readState(fx.statePath),
+    worktree: fx.WT, result: null, ...options });
+}
+
+test('cross-attempt: current dispatched task with missing episode still refuses', async () => {
+  const fx = await crossAttemptFixture();
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  delete record.review_context.episodes['2'];
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  assert.throws(() => crossAttemptAuthorize(fx, { result: fx.secondResult }), /task 2: no identifiable entry/);
+});
+
+for (const kind of ['retire', 'hold', 'invalid restart']) {
+  test('cross-attempt: owning attempt ' + kind + ' refuses recording and completion', async () => {
+    const fx = await crossAttemptFixture();
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    const episode = record.history[0].review_context.episodes['1'];
+    if (kind === 'retire') episode.disposition = { kind: 'retire' };
+    if (kind === 'hold') episode.hold = 'migration-pending';
+    if (kind === 'invalid restart') episode.disposition = { kind: 'restart', subject: 'invalid', lineage: {} };
+    writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    assert.throws(() => crossAttemptAuthorize(fx), /retired|hold|invalid restart/);
+    const state = readState(fx.statePath);
+    assert.equal(taskEpisodeEligibleForCompletion(fx.statePath, state, state.tasks[0]), false);
+  });
+}
+
+test('cross-attempt: no-owner state-done task is not exempt and is ineligible', async () => {
+  const fx = await crossAttemptFixture();
+  const state = readState(fx.statePath);
+  state.tasks.push({ id: 3, wave: 1, status: 'done', files: [] });
+  writeState(fx.statePath, state);
+  assert.throws(() => crossAttemptAuthorize(fx), /task 3: no identifiable owning dispatch attempt/);
+  assert.equal(taskEpisodeEligibleForCompletion(fx.statePath, state, state.tasks[2]), false);
+});
+
+for (const missing of ['recorded status', 'recorded task', 'durable event', 'eligible review']) {
+  test('cross-attempt: state-done task without ' + missing + ' cannot be exempt', async () => {
+    const fx = await crossAttemptFixture();
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    const owner = record.history[0];
+    if (missing === 'recorded status') owner.status = 'superseded';
+    if (missing === 'recorded task') owner.record_outcome.recorded = [];
+    if (missing === 'durable event') owner.review_context.tasks[0].base_sha = 'unreviewed-base';
+    if (missing === 'eligible review') {
+      const event = x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+        .find((e) => e.type === 'task_adversary_review' && e.data.task === 1);
+      event.data.review.verdict = 'reject';
+      appendEvent(fx.statePath, event);
+    }
+    writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    assert.throws(() => crossAttemptAuthorize(fx), /task 1: owning attempt lacks recorded durable completion evidence/);
+  });
+}
+
+for (const damage of ['missing context', 'missing episode', 'retire', 'hold', 'invalid restart']) {
+  test('cross-attempt: no-fallback when newer dispatch has ' + damage, async () => {
+    const fx = await crossAttemptFixture();
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    // The newer dispatch included A even though its context/episode is damaged.
+    record.tasks.push({ task_id: 1 });
+    record.payload.push({ id: 1 });
+    if (damage === 'missing context') delete record.review_context;
+    else if (damage !== 'missing episode') {
+      const episode = { subject: 'newer-episode' };
+      if (damage === 'retire') episode.disposition = { kind: 'retire' };
+      if (damage === 'hold') episode.hold = 'migration-pending';
+      if (damage === 'invalid restart') episode.disposition = { kind: 'restart', subject: 'invalid', lineage: {} };
+      record.review_context.episodes['1'] = episode;
+    }
+    writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    assert.throws(() => crossAttemptAuthorize(fx), /no enabled review context|no identifiable entry|retired|hold|invalid restart/);
+    const state = readState(fx.statePath);
+    assert.equal(taskEpisodeEligibleForCompletion(fx.statePath, state, state.tasks[0]), false);
+  });
+}
+
+test('cross-attempt: three attempts select newest dispatch membership, never an older valid episode', () => {
+  const slot = { main: '/fixture', bundleDir: '/fixture/docs/masterplan/run', wave: 1 };
+  const first = { attempt: 1, tasks: [{ task_id: 1 }], review_context: {
+    enabled: true, episodes: { 1: { subject: 'first-approved-episode' } },
+  } };
+  const second = { attempt: 2, tasks: [{ task_id: 1 }], review_context: {
+    enabled: true, episodes: { 1: { subject: 'second-episode' } },
+  } };
+  const third = { attempt: 3, tasks: [{ task_id: 2 }], review_context: {
+    enabled: true, episodes: { 2: { subject: 'third-episode' } },
+  }, history: [first, second] };
+  assert.equal(resolveTaskReviewAttempt(third, 1, slot).record.attempt, 2);
+  for (const episode of [{ subject: 'second', hold: 'blocked' },
+    { subject: 'second', disposition: { kind: 'retire' } },
+    { disposition: { kind: 'restart', subject: 'invalid', lineage: {} } }, null]) {
+    second.review_context.episodes['1'] = episode;
+    assert.throws(() => resolveTaskReviewAttempt(third, 1, slot), /hold|retired|invalid restart|no identifiable entry/);
+  }
+  // Payload fallback is only for records without descriptor membership. An empty
+  // descriptor set must not be widened by stale payload/context membership.
+  delete second.tasks;
+  second.payload = [{ id: 1 }];
+  second.review_context.episodes['1'] = { subject: 'second' };
+  assert.equal(resolveTaskReviewAttempt(third, 1, slot).record.attempt, 2);
+  second.tasks = [];
+  assert.equal(resolveTaskReviewAttempt(third, 1, slot).record.attempt, 1);
+  third.tasks.push({ task_id: 1 });
+  assert.throws(() => resolveTaskReviewAttempt(third, 1, slot), /no identifiable entry/);
+});

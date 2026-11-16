@@ -42,9 +42,7 @@ test('recorder mutating entry inventory passes through final authorizeRecording 
         const record = source.indexOf('export function recordWaveResult(');
         const end = source.indexOf('export function promoteAmendment(');
         let gate = source.slice(start, record)
-          .replace('if (!ctx?.enabled) return { recovery, recoverySelector, reconciledReviews, episodeRecord };',
-            'if (!ctx?.enabled) { globalThis.__recorderGateCount = (globalThis.__recorderGateCount ?? 0) + 1; return { recovery, recoverySelector, reconciledReviews, episodeRecord }; }')
-          .replace('  return { recovery, recoverySelector, reconciledReviews, episodeRecord };',
+          .replaceAll('  return { recovery, recoverySelector, reconciledReviews, episodeRecord };',
             '  globalThis.__recorderGateCount = (globalThis.__recorderGateCount ?? 0) + 1; return { recovery, recoverySelector, reconciledReviews, episodeRecord };');
         let body = source.slice(record, end);
         body = body.replace('  if (!statePath)', '  const gateStart = globalThis.__recorderGateCount ?? 0;\\n' +

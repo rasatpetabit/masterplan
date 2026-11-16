@@ -202,6 +202,15 @@ retain their frozen choices, not new file or config values. Explicit sizing arms
 when the legacy bundle toggle is off; an omitted/empty map keeps that toggle's existing behavior.
 The finish-time whole-branch review is unchanged. No plan schema or state-task field is added.
 
+A task belongs to the newest dispatch attempt that included it: current record first, then
+`history` newest-first, using `tasks[].task_id` (or `payload[].id` only when `tasks` is absent),
+not episode presence. Recording and completion share this resolver and refuse a missing,
+held, retired or invalid restarted episode in that owner; they never fall back past it.
+Submitted/deferred tasks still require current-attempt evidence. Only state-done tasks owned
+by an earlier `recorded` attempt whose `record_outcome.recorded` includes them and whose
+durable, eligible, nonblocking task-review event matches the frozen base and episode are
+exempt from the new recording transaction; old receipts never authorize new episodes.
+
 `--reviews-file` is command-local: at **dispatch-wave** it carries sizing intent, while at
 **record-result** it still carries reviewer receipts keyed by task id. Keep those files separate.
 

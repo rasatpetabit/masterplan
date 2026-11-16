@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Record and complete waves whose tasks finish across multiple dispatch attempts by resolving
+  each task's newest owning attempt. Preserve earlier recorded work only with durable review
+  evidence; missing or ineligible newer episodes never fall back to older approval.
+
 ## [10.2.0] — 2026-11-14
 
 Runs that edit repositories beside the bundle's repository now execute and finish safely: each such
