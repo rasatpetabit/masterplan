@@ -1660,6 +1660,9 @@ for (const mixed of [false, true]) {
       result: { ...result, tasks }, now: 2600 });
     assert.equal(out.cleared, true);
     assert.equal(out.scope.ok, true);
+    assert.equal(out.commits.code_by_repo[siblingWT], git(siblingWT, 'rev-parse', 'HEAD'));
+    if (mixed) assert.equal(out.commits.code_by_repo[fx.WT], git(fx.WT, 'rev-parse', 'HEAD'));
+    assert.equal(Object.keys(out.commits.code_by_repo).length, mixed ? 2 : 1);
     assert.notEqual(git(siblingWT, 'rev-parse', 'HEAD'), beforeSibling);
     assert.equal(git(siblingWT, 'show', 'HEAD:src/a.txt'), 'REVIEWED SIBLING');
     assert.equal(git(siblingWT, 'status', '--porcelain'), '');
@@ -1767,7 +1770,7 @@ function crossAttemptRecord(fx, result, reviews = null) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
-async function crossAttemptFixture({ external = false, shared = false, extraScope = false } = {}) {
+async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
     tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
@@ -1799,6 +1802,11 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
   assert.deepEqual(first.failed.map((r) => r.id), [2]);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
   fx.aCommit = git(fx.aRepo, 'rev-parse', 'HEAD');
+  if (committedDrift) {
+    write(fx.aRepo, 'src/1.txt', 'UNREVIEWED committed A drift\n');
+    git(fx.aRepo, 'add', '--', 'src/1.txt');
+    git(fx.aRepo, 'commit', '-qm', 'unreviewed change before redispatch');
+  }
   // Direct redispatch keeps the whole-wave scope from attempt 1. An amendment
   // can add A's file to B now that A is done (only B is routed in attempt 2).
   if (shared || extraScope) {
@@ -1889,6 +1897,108 @@ for (const external of [false, true]) {
     });
   }
 }
+
+for (const external of [true, false]) {
+  test(`cross-attempt: committed A drift refuses (${external ? 'external sibling after redispatch' : 'run repo before redispatch'})`, async () => {
+    const fx = await crossAttemptFixture({ external, committedDrift: !external });
+    if (external) {
+      write(fx.aRepo, 'src/1.txt', 'UNREVIEWED committed A drift\n');
+      git(fx.aRepo, 'add', '--', 'src/1.txt');
+      git(fx.aRepo, 'commit', '-qm', 'unreviewed change after redispatch');
+      assert.equal(git(fx.aRepo, 'status', '--porcelain'), '', 'committed sibling drift is clean');
+    } else {
+      assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).review_context.tasks[0].base_sha,
+        git(fx.WT, 'rev-parse', 'HEAD'), 'redispatch froze the drifted tip, not a trusted baseline');
+    }
+    const beforeRun = git(fx.WT, 'rev-parse', 'HEAD');
+    const beforeA = git(fx.aRepo, 'rev-parse', 'HEAD');
+    const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
+    const beforeStatus = git(fx.aRepo, 'status', '--porcelain');
+    const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+    const beforeRecord = fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8');
+    const beforeEvents = x22Events(fx);
+    assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+      assert.equal(err.status, 2);
+      assert.match(String(err.stderr), /task 1:.*repository .*src\/1\.txt.*fresh review of this task's episode is required/);
+      assert.ok(String(err.stderr).includes(fx.aRepo), 'names the repository locus');
+      return true;
+    });
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeRun);
+    assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), beforeA);
+    assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain);
+    assert.equal(git(fx.aRepo, 'status', '--porcelain'), beforeStatus);
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+    assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8'), beforeRecord);
+    assert.ok(x22Events(fx).startsWith(beforeEvents));
+    const appended = x22Events(fx).slice(beforeEvents.length).split('\n').filter(Boolean).map(JSON.parse);
+    assert.deepEqual(appended.map((e) => [e.type, e.data?.task]), [['task_adversary_review', 2]],
+      'only Phase B ingestion appends before authorization; no recording events');
+  });
+}
+
+for (const external of [false, true]) {
+  test(`cross-attempt: stored code baseline survives archive (${external ? 'external sibling' : 'run repo'})`, async () => {
+    const fx = await crossAttemptFixture({ external });
+    const owner = readWaveDispatchRecord(fx.bundleDir, 1).history[0];
+    assert.equal(owner.record_outcome.commits.code_by_repo[fx.aRepo], fx.aCommit);
+    assert.deepEqual(Object.keys(owner.record_outcome.commits.code_by_repo), [fx.aRepo]);
+    const base = owner.review_context.tasks[0].base_sha;
+    assert.equal(git(fx.aRepo, 'rev-parse', fx.aCommit + '^'), base);
+    assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+    const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+    assert.deepEqual(out.recorded, [2]);
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    assert.equal(record.history[0].record_outcome.commits.code_by_repo[fx.aRepo], fx.aCommit);
+    assert.equal(record.record_outcome.commits.code_by_repo[fx.WT], git(fx.WT, 'rev-parse', 'HEAD'));
+  });
+}
+
+test('cross-attempt: missing trusted baseline refuses legacy record with actionable message', async () => {
+  const fx = await crossAttemptFixture({ external: true });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  const owner = record.history[0];
+  // Same legacy outcome fields as the live example; retain the genuine frozen
+  // base, code commit (whose parent is that base), durable review and state commit.
+  delete owner.record_outcome.commits;
+  assert.deepEqual(Object.keys(owner.record_outcome).sort(), ['cleared', 'failed', 'recorded']);
+  assert.equal(git(fx.aRepo, 'rev-parse', fx.aCommit + '^'), owner.review_context.tasks[0].base_sha);
+  assert.ok(x22Events(fx).includes('task_adversary_review'));
+  assert.match(git(fx.MAIN, 'log', '-1', '--format=%s'), /wave 1 state/);
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+  const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+  const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const beforeRun = git(fx.WT, 'rev-parse', 'HEAD');
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /task 1:.*repository .*src\/1\.txt.*missing trusted recorded code baseline.*fresh review of this task's episode is required/);
+    assert.ok(String(err.stderr).includes(fx.aRepo));
+    return true;
+  });
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeRun);
+  assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), fx.aCommit);
+});
+
+test('cross-attempt: blocked B-only partial edits record and remain uncommitted', async () => {
+  const fx = await crossAttemptFixture();
+  const result = { wave: 1, tasks: [{ task_id: 2, digest: workerDigest(2, 'blocked') }] };
+  write(fx.WT, 'src/2.txt', 'B partial unreviewed\n');
+  const out = crossAttemptRecord(fx, result);
+  assert.equal(out.outcome, 'recorded');
+  assert.deepEqual(out.recorded, []);
+  assert.deepEqual(out.failed.map((r) => r.id), [2]);
+  assert.equal(out.cleared, false);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(git(fx.WT, 'diff', '--cached', '--name-only'), '');
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/2.txt'), 'utf8'), 'B partial unreviewed\n');
+  assert.match(git(fx.WT, 'status', '--porcelain'), /src\/2\.txt/);
+  assert.equal(readState(fx.statePath).tasks[1].status, 'pending');
+  assert.equal(x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+    .filter((e) => e.type === 'task_adversary_review').length, 1, 'no review fabricated for B');
+});
 
 test('cross-attempt: B review covers shared declared file and commits it', async () => {
   const fx = await crossAttemptFixture({ shared: true });

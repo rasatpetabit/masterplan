@@ -4181,6 +4181,7 @@ function main() {
                     recorded: recRes.recorded,
                     failed: recRes.failed,
                     cleared: recRes.cleared,
+                    commits: recRes.commits,
                   },
                 });
               } else {
