@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.1] — 2026-11-16
+
+A wave whose tasks finish in different dispatch attempts now records and completes: each task is judged
+by the newest attempt that dispatched it, and earlier recorded work is kept only with its durable review
+and unchanged files.
+
 ### Fixed
 - Record and complete waves whose tasks finish across multiple dispatch attempts by resolving
   each task's newest owning attempt. Preserve earlier recorded work only with durable review
