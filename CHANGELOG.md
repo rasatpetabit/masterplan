@@ -13,9 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence and unchanged declared files (stored per-repository code baseline plus index and
   working tree; a missing legacy baseline requires a unique direct child of the owning frozen
   base in HEAD's ancestry, in the owning review repository, whose object-only artifact rebuild
-  exactly matches the durable episode-bound review hash), except
-  files shared with a currently reviewed task; missing or ineligible newer episodes never fall
-  back to older approval.
+  exactly matches the durable episode-bound review hash). Shared paths are covered only in
+  the current task's frozen review repository and must match the recorded baseline through
+  every covering review's frozen base. Uncommitted in-scope changes outside all wave-task
+  declarations refuse recording; scope-only changes committed before the current frozen base
+  remain part of that trusted boundary. Store accepted baselines for clean done-task loci too,
+  only after the transaction's authorization and staging succeed; re-drives revalidate rather
+  than repairing historical outcomes. Committed recovery stays pinned and fail-closed.
+  Missing or ineligible newer episodes never fall back to older approval.
 
 ## [10.2.0] — 2026-11-14
 

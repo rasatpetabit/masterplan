@@ -211,13 +211,23 @@ by an earlier `recorded` attempt whose `record_outcome.recorded` includes them a
 durable, eligible, nonblocking task-review event matches the frozen base and episode are
 exempt from the new recording transaction, provided their declared files match the owning
 attempt's stored `record_outcome.commits.code_by_repo` baseline (absolute repository keys)
-and have no index or working-tree changes at every locus (a missing legacy baseline is admitted
-only in the owning review repository when exactly one ancestor of HEAD is a direct child of the
-owning frozen base and its object-only rebuild, tracked diff then sorted per-addition diffs,
-hashes to that task's durable base-and-episode-bound review artifact; otherwise it refuses),
-except files shared with a current-attempt task undergoing artifact authorization; old receipts never authorize new
-episodes. Changed exempt-task files or in-scope paths outside task declarations refuse recording
-with a fresh-episode-review requirement rather than silently narrowing staging.
+at every locus (a missing legacy baseline is admitted only in the owning review repository
+when exactly one ancestor of HEAD is a direct child of the owning frozen base and its
+object-only rebuild, tracked diff then sorted per-addition diffs, hashes to that task's durable
+base-and-episode-bound review artifact; otherwise it refuses). A concrete path, including a
+child of a directory declaration, is covered only by a current task undergoing artifact
+authorization that declares it and whose frozen review repository is that same locus.
+Covered paths must be unchanged from the recorded baseline to **each** covering review's
+frozen base; only subsequent changes belong to those artifacts. Uncovered paths must match
+the baseline through HEAD, index and working tree. Uncommitted in-scope changes outside all
+wave-task declarations also refuse recording with a fresh-episode-review requirement, rather
+than silently narrowing staging. Scope-only changes committed before the current frozen base
+remain part of that trusted boundary, not exempt-task bytes. Old receipts never authorize new
+episodes. Normal recording stores the accepted code commit for every done-task declaration's
+repository locus, including clean loci (HEAD captured only after authorization and successful
+staging/commits); a crash re-drive revalidates its own transaction and never repairs historical
+outcomes from today's HEAD. Committed recovery remains pinned and fail-closed, without this
+clean-locus baseline backfill.
 
 `--reviews-file` is command-local: at **dispatch-wave** it carries sizing intent, while at
 **record-result** it still carries reviewer receipts keyed by task id. Keep those files separate.

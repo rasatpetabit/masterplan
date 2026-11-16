@@ -30,7 +30,7 @@ import {
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
-import { recordWaveResult, authorizeRecording } from '../lib/wave-commit.mjs';
+import { recordWaveResult, authorizeRecording, assertEarlierTaskFilesUnchanged } from '../lib/wave-commit.mjs';
 import { captureFullWorkingDiff, rebuildFullWorkingDiff } from '../lib/working-diff.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 import { resolveTaskReviewAttempt, taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
@@ -1771,7 +1771,7 @@ function crossAttemptRecord(fx, result, reviews = null) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
-async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false } = {}) {
+async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false, noEditA = false, workerCommittedA = false, committedScopeOnly = false, beforeFirstRecord = null } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
     tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
@@ -1799,7 +1799,12 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
     const unrelated = git(fx.aRepo, 'commit-tree', base + '^{tree}', '-m', 'unrelated root');
     git(fx.aRepo, 'reset', '--soft', unrelated);
   }
-  write(fx.aRepo, 'src/1.txt', 'A complete\n');
+  if (!noEditA) write(fx.aRepo, 'src/1.txt', 'A complete\n');
+  if (workerCommittedA) {
+    git(fx.aRepo, 'add', '--', 'src/1.txt');
+    git(fx.aRepo, 'commit', '-qm', 'worker committed reviewed A');
+  }
+  fx.acceptedA = git(fx.aRepo, 'rev-parse', 'HEAD');
   if (mixedArtifact) write(fx.aRepo, 'src/seed.txt', 'A tracked modification\n');
   if (reviewPartial) write(fx.WT, 'src/2.txt', 'B partial at A review\n');
   const firstResult = { wave: 1, tasks: [
@@ -1808,6 +1813,7 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
   const phaseA = crossAttemptRecord(fx, firstResult);
   assert.equal(phaseA.op, 'run_native_reviews');
   assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [1]);
+  if (beforeFirstRecord) await beforeFirstRecord(fx, firstResult);
   const first = crossAttemptRecord(fx, firstResult, { 1: x22Approval });
   assert.deepEqual(first.recorded, [1]);
   assert.deepEqual(first.failed.map((r) => r.id), [2]);
@@ -1822,8 +1828,18 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
   // can add A's file to B now that A is done (only B is routed in attempt 2).
   if (shared || extraScope) {
     const amended = readState(fx.statePath);
-    if (shared) amended.tasks[1].files.push('src/1.txt');
+    if (shared) amended.tasks[1].files.push(shared === 'directory' ? 'src/' : 'src/1.txt');
     if (extraScope) amended.active_run.scope.push(path.join(fx.tmp, 'sibling/src/unassigned.txt'));
+    writeState(fx.statePath, amended);
+    write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: amended.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+  }
+  if (committedScopeOnly) {
+    write(fx.WT, 'scope-only.txt', 'trusted boundary bytes\n');
+    git(fx.WT, 'add', '--', 'scope-only.txt');
+    git(fx.WT, 'commit', '-qm', 'scope-only before frozen base');
+    const amended = readState(fx.statePath);
+    amended.tasks[1].files = ['src/'];
+    amended.active_run.scope.push('scope-only.txt');
     writeState(fx.statePath, amended);
     write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: amended.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
   }
@@ -2161,6 +2177,161 @@ test('cross-attempt: B review covers shared declared file and commits it', async
   assert.equal(git(fx.WT, 'show', 'HEAD:src/1.txt'), 'A and B shared update');
   assert.equal(git(fx.WT, 'status', '--porcelain'), '');
 });
+
+for (const shared of [true, 'directory']) {
+  test(`cross-attempt: shared file drift in B frozen base refuses (${shared})`, async () => {
+    const fx = await crossAttemptFixture({ shared, committedDrift: true });
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    const frozen = record.review_context.tasks[0].base_sha;
+    assert.notEqual(frozen, fx.aCommit);
+    assert.equal(git(fx.WT, 'show', `${frozen}:src/1.txt`), 'UNREVIEWED committed A drift');
+    const before = { state: fs.readFileSync(fx.statePath, 'utf8'), head: git(fx.WT, 'rev-parse', 'HEAD') };
+    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+      assert.match(String(err.stderr), /task 1:.*repository .*src\/1\.txt.*fresh review/);
+      return true;
+    });
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before.state);
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), before.head);
+  });
+}
+
+for (const external of [false, true]) {
+  for (const workerCommittedA of [false, true]) {
+    test(`cross-attempt: clean A baseline persists (${external ? 'sibling' : 'run repo'}, ${workerCommittedA ? 'worker commit' : 'no edit'})`, async () => {
+      const fx = await crossAttemptFixture({ external, noEditA: !workerCommittedA, workerCommittedA });
+      const record = readWaveDispatchRecord(fx.bundleDir, 1);
+      assert.equal(fx.aCommit, fx.acceptedA, 'recording made no code commit in clean locus');
+      assert.deepEqual(record.history[0].record_outcome.commits.code_by_repo, { [fx.aRepo]: fx.acceptedA });
+      const ownerBefore = structuredClone(record.history[0].record_outcome);
+      const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+      assert.deepEqual(out.recorded, [2]);
+      assert.equal(out.cleared, true);
+      assert.equal(out.commits.code_by_repo[fx.WT], git(fx.WT, 'rev-parse', 'HEAD'));
+      assert.equal(out.commits.code_by_repo[fx.aRepo], external ? fx.acceptedA : out.commits.code_by_repo[fx.WT]);
+      assert.deepEqual(readWaveDispatchRecord(fx.bundleDir, 1).history[0].record_outcome, ownerBefore,
+        'never repair a historical outcome from today HEAD');
+    });
+  }
+}
+
+test('cross-attempt: scope-only boundary refuses uncommitted but accepts pre-base committed bytes', async () => {
+  const fx = await crossAttemptFixture({ committedScopeOnly: true });
+  const frozen = readWaveDispatchRecord(fx.bundleDir, 1).review_context.tasks[0].base_sha;
+  assert.equal(git(fx.WT, 'show', `${frozen}:scope-only.txt`), 'trusted boundary bytes');
+  assert.deepEqual(readState(fx.statePath).tasks.map((t) => t.files), [['src/1.txt'], ['src/']]);
+  write(fx.WT, 'scope-only.txt', 'uncommitted scope-only bytes\n');
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.match(String(err.stderr), /in-scope files outside task declarations scope-only\.txt/);
+    return true;
+  });
+  write(fx.WT, 'scope-only.txt', 'trusted boundary bytes\n');
+  const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+  assert.deepEqual(out.recorded, [2]);
+  assert.equal(out.cleared, true);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/2.txt');
+  assert.equal(git(fx.WT, 'show', 'HEAD:scope-only.txt'), 'trusted boundary bytes');
+});
+
+// Exercise continuity independently of the earlier mutation-locus guard. The
+// authorized B artifact is genuine; a later sibling declaration cannot extend it.
+function checkEarlierFiles(fx, state, record, reviewIds = new Set(['2'])) {
+  const data = x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+    .find((e) => e.type === 'task_adversary_review' && e.data.task === 1).data;
+  return assertEarlierTaskFilesUnchanged(state, record,
+    new Map([['1', { owner: record.history[0], data }]]), reviewIds,
+    { worktree: fx.WT, mainRoot: fx.MAIN, slug: state.slug });
+}
+for (const committed of [false, true]) {
+  test(`cross-attempt: foreign declaration cannot cover sibling A (${committed ? 'committed' : 'uncommitted'})`, async () => {
+    const fx = await crossAttemptFixture({ external: true });
+    const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+      result: fx.secondResult, providedReviews: { 2: x22Approval }, policy: dispatchFixture, now: 3000 });
+    const state = readState(fx.statePath);
+    state.tasks[1].files.push(path.join(fx.tmp, 'sibling/src/1.txt'));
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    assert.equal(record.review_context.tasks[0].repo, fx.WT);
+    assert.notEqual(fx.aRepo, fx.WT);
+    assert.doesNotThrow(() => checkEarlierFiles(fx, state, record));
+    write(fx.aRepo, 'src/1.txt', 'UNREVIEWED sibling drift\n');
+    if (committed) {
+      git(fx.aRepo, 'add', '--', 'src/1.txt');
+      git(fx.aRepo, 'commit', '-qm', 'foreign declaration is not coverage');
+    }
+    assert.throws(() => checkEarlierFiles(fx, state, record), (err) => {
+      assert.match(err.message, /task 1:.*repository .*src\/1\.txt.*fresh review/);
+      assert.ok(err.message.includes(fx.aRepo));
+      return true;
+    });
+    assert.throws(() => authorizeRecording({ statePath: fx.statePath, state, result: reviewed,
+      worktree: fx.WT }), /mutation locus mismatch/, 'outer guard stays intact too');
+  });
+}
+
+test('cross-attempt: every covering frozen base must preserve A, even beneath directories', async () => {
+  const fx = await crossAttemptFixture({ shared: 'directory' });
+  const state = readState(fx.statePath);
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  // A second review of the same path starts at a later, drifted boundary.
+  write(fx.WT, 'src/1.txt', 'drift before second covering base\n');
+  git(fx.WT, 'add', '--', 'src/1.txt');
+  git(fx.WT, 'commit', '-qm', 'second frozen boundary');
+  const laterBase = git(fx.WT, 'rev-parse', 'HEAD');
+  state.tasks.push({ id: 3, wave: 1, status: 'pending', files: ['src/1.txt'] });
+  record.tasks.push({ task_id: 3 });
+  record.review_context.tasks.push({ task_id: 3, repo: fx.WT, base_sha: laterBase });
+  // B's own frozen base is clean, but the other covering base is not.
+  assert.equal(record.review_context.tasks[0].base_sha, fx.aCommit);
+  assert.throws(() => checkEarlierFiles(fx, state, record, new Set(['2', '3'])), /task 1:.*src\/1\.txt.*fresh review/);
+});
+
+test('cross-attempt: fully covered declaration still needs its trusted baseline', async () => {
+  const fx = await crossAttemptFixture({ shared: true });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.history[0].record_outcome.commits.code_by_repo[fx.aRepo] = null;
+  assert.throws(() => checkEarlierFiles(fx, readState(fx.statePath), record),
+    /task 1:.*src\/1\.txt.*missing trusted recorded code baseline/);
+});
+
+for (const workerCommittedA of [false, true]) {
+  test(`cross-attempt: crash re-drive revalidates clean loci (${workerCommittedA ? 'worker commit' : 'no edit'})`, async () => {
+    const fx = await crossAttemptFixture({ external: true, noEditA: !workerCommittedA, workerCommittedA,
+      beforeFirstRecord: async (firstFx, result) => {
+        const hooks = path.join(firstFx.tmp, 'crash-hooks');
+        write(hooks, 'pre-commit', '#!/bin/sh\necho injected-state-commit-crash >&2\nexit 1\n');
+        fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755);
+        git(firstFx.MAIN, 'config', 'core.hooksPath', hooks);
+        assert.throws(() => crossAttemptRecord(firstFx, result, { 1: x22Approval }), (err) => {
+          assert.match(String(err.stderr), /injected-state-commit-crash/);
+          return true;
+        });
+        git(firstFx.MAIN, 'config', '--unset', 'core.hooksPath');
+        assert.equal(readState(firstFx.statePath).tasks[0].status, 'done', 'leading state write survived');
+        const pending = readWaveDispatchRecord(firstFx.bundleDir, 1);
+        assert.equal(pending.status, 'pending');
+        assert.equal(pending.record_outcome, undefined, 'no outcome or baseline persisted by failed transaction');
+        assert.equal(git(firstFx.aRepo, 'rev-parse', 'HEAD'), firstFx.acceptedA);
+        const priorBytes = workerCommittedA ? 'A complete\n' : null;
+        write(firstFx.aRepo, 'src/1.txt', 'unvalidated bytes after crash\n');
+        const before = fs.readFileSync(firstFx.statePath, 'utf8');
+        assert.throws(() => recordWaveResult({ statePath: firstFx.statePath, worktree: firstFx.WT,
+          self: firstFx.self, now: 3000, result: null }), /artifact episode evidence mismatch/);
+        assert.equal(fs.readFileSync(firstFx.statePath, 'utf8'), before);
+        assert.deepEqual(readWaveDispatchRecord(firstFx.bundleDir, 1), pending);
+        if (priorBytes == null) fs.unlinkSync(path.join(firstFx.aRepo, 'src/1.txt'));
+        else write(firstFx.aRepo, 'src/1.txt', priorBytes);
+        // The fixture now re-drives the original transaction through the CLI,
+        // reusing the original review only after authorization succeeds again.
+      },
+    });
+    const owner = readWaveDispatchRecord(fx.bundleDir, 1).history[0];
+    assert.deepEqual(owner.record_outcome.commits.code_by_repo, { [fx.aRepo]: fx.acceptedA });
+    assert.equal(x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
+      .filter((e) => e.type === 'task_adversary_review' && e.data.task === 1).length, 1);
+    const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+    assert.equal(out.cleared, true);
+    assert.equal(out.commits.code_by_repo[fx.aRepo], fx.acceptedA);
+  });
+}
 
 test('cross-attempt: blocked B cannot cover shared file without a review', async () => {
   const fx = await crossAttemptFixture({ shared: true });
