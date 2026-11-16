@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Record and complete waves whose tasks finish across multiple dispatch attempts by resolving
   each task's newest owning attempt. Preserve earlier recorded work only with durable review
-  evidence; missing or ineligible newer episodes never fall back to older approval.
+  evidence and unchanged declared files (index and working tree in every repository), except
+  files shared with a currently reviewed task; missing or ineligible newer episodes never fall
+  back to older approval.
 
 ## [10.2.0] — 2026-11-14
 

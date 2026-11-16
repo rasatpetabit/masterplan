@@ -1767,15 +1767,27 @@ function crossAttemptRecord(fx, result, reviews = null) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
-async function crossAttemptFixture() {
+async function crossAttemptFixture({ external = false, shared = false, extraScope = false } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
     tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
   } });
-  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: [1, 2].map((id) => planEntry(id, 1, [`src/${id}.txt`])) }));
+  const state = readState(fx.statePath);
+  if (external) {
+    // A repository beside MAIN, not a directory inside the run worktree.
+    const sibling = path.join(fx.tmp, 'sibling');
+    execFileSync('git', ['clone', '-q', fx.MAIN, sibling], { stdio: 'pipe' });
+    git(sibling, 'config', 'user.email', 'test@test');
+    git(sibling, 'config', 'user.name', 'test');
+    git(sibling, 'config', 'commit.gpgsign', 'false');
+    state.tasks[0].files = [path.join(sibling, 'src/1.txt')];
+    writeState(fx.statePath, state);
+  }
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: state.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
   launchNative(fx);
   await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
-  write(fx.WT, 'src/1.txt', 'A complete\n');
+  fx.aRepo = readWaveDispatchRecord(fx.bundleDir, 1).review_context.tasks[0].repo;
+  write(fx.aRepo, 'src/1.txt', 'A complete\n');
   const firstResult = { wave: 1, tasks: [
     { task_id: 1, digest: workerDigest(1) }, { task_id: 2, digest: workerDigest(2, 'blocked') },
   ] };
@@ -1786,9 +1798,16 @@ async function crossAttemptFixture() {
   assert.deepEqual(first.recorded, [1]);
   assert.deepEqual(first.failed.map((r) => r.id), [2]);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
-  fx.aCommit = git(fx.WT, 'rev-parse', 'HEAD');
-  // recover_wave re-routes only the still-pending blocked digest; no amendment needed.
-  launchNative(fx);
+  fx.aCommit = git(fx.aRepo, 'rev-parse', 'HEAD');
+  // Direct redispatch keeps the whole-wave scope from attempt 1. An amendment
+  // can add A's file to B now that A is done (only B is routed in attempt 2).
+  if (shared || extraScope) {
+    const amended = readState(fx.statePath);
+    if (shared) amended.tasks[1].files.push('src/1.txt');
+    if (extraScope) amended.active_run.scope.push(path.join(fx.tmp, 'sibling/src/unassigned.txt'));
+    writeState(fx.statePath, amended);
+    write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: amended.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+  }
   const second = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3000, policy: dispatchFixture });
   assert.equal(second.record.attempt, 2);
   assert.deepEqual(second.record.tasks.map((t) => t.task_id), [2]);
@@ -1838,6 +1857,80 @@ test('cross-attempt: phase B retry records only B and completion retains A', asy
   assert.equal(next.op, 'run_skill');
   assert.equal(next.skill, 'finish');
   assert.equal(git(fx.WT, 'rev-list', '--count', `${fx.aCommit}..HEAD`), '1', 'no duplicate code commit');
+});
+
+// Expectations come from the episodes: A's old approval cannot authorize new
+// bytes outside B's declarations, even if B's full same-repo diff includes them.
+for (const external of [false, true]) {
+  for (const drift of ['working tree', 'index only', 'index masked by working tree']) {
+    test(`cross-attempt: changed A refuses phase B (${external ? 'external sibling' : 'run repo'}, ${drift})`, async () => {
+      const fx = await crossAttemptFixture({ external });
+      const beforeRun = git(fx.WT, 'rev-parse', 'HEAD');
+      const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
+      write(fx.aRepo, 'src/1.txt', 'UNREVIEWED A drift\n');
+      if (drift !== 'working tree') git(fx.aRepo, 'add', '--', 'src/1.txt');
+      if (drift === 'index masked by working tree') write(fx.aRepo, 'src/1.txt', 'A complete\n');
+      const beforeStatus = git(fx.aRepo, 'status', '--porcelain');
+      const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+      const phaseA = crossAttemptRecord(fx, fx.secondResult);
+      assert.equal(phaseA.op, 'run_native_reviews');
+      assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [2]);
+      assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+        assert.equal(err.status, 2);
+        assert.match(String(err.stderr), /review episode task 1:.*src\/1\.txt.*fresh review of (this|that) task's episode is required/);
+        return true;
+      });
+      assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), fx.aCommit, 'A commit is untouched');
+      assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeRun, 'no run commit');
+      assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain, 'no bundle commit');
+      assert.equal(git(fx.aRepo, 'status', '--porcelain'), beforeStatus, 'index/working changes preserved');
+      assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState, 'no done marks');
+      assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'pending');
+    });
+  }
+}
+
+test('cross-attempt: B review covers shared declared file and commits it', async () => {
+  const fx = await crossAttemptFixture({ shared: true });
+  write(fx.WT, 'src/1.txt', 'A and B shared update\n');
+  const phaseA = crossAttemptRecord(fx, fx.secondResult);
+  assert.equal(phaseA.op, 'run_native_reviews');
+  assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [2]);
+  const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+  assert.deepEqual(out.recorded, [2]);
+  assert.equal(out.cleared, true);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD^'), fx.aCommit);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/1.txt\nsrc/2.txt');
+  assert.equal(git(fx.WT, 'show', 'HEAD:src/1.txt'), 'A and B shared update');
+  assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+});
+
+test('cross-attempt: blocked B cannot cover shared file without a review', async () => {
+  const fx = await crossAttemptFixture({ shared: true });
+  write(fx.WT, 'src/1.txt', 'UNREVIEWED shared update\n');
+  const result = { wave: 1, tasks: [{ task_id: 2, digest: workerDigest(2, 'blocked') }] };
+  assert.throws(() => crossAttemptRecord(fx, result), (err) => {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /task 1:.*src\/1\.txt.*fresh review of this task's episode is required/);
+    return true;
+  });
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(readState(fx.statePath).tasks[1].status, 'pending');
+});
+
+test('cross-attempt: unassigned in-scope sibling file refuses phase B', async () => {
+  const fx = await crossAttemptFixture({ external: true, extraScope: true });
+  write(fx.aRepo, 'src/unassigned.txt', 'UNREVIEWED scope-only file\n');
+  assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+  const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /src\/unassigned\.txt.*fresh review.*episode.*required/);
+    return true;
+  });
+  assert.equal(git(fx.aRepo, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), beforeMain);
+  assert.equal(readState(fx.statePath).tasks[1].status, 'pending');
 });
 
 function crossAttemptAuthorize(fx, options = {}) {

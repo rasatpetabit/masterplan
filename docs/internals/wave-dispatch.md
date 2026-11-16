@@ -209,7 +209,11 @@ held, retired or invalid restarted episode in that owner; they never fall back p
 Submitted/deferred tasks still require current-attempt evidence. Only state-done tasks owned
 by an earlier `recorded` attempt whose `record_outcome.recorded` includes them and whose
 durable, eligible, nonblocking task-review event matches the frozen base and episode are
-exempt from the new recording transaction; old receipts never authorize new episodes.
+exempt from the new recording transaction, provided their declared files are unchanged versus
+HEAD in both index and working tree at every resolved repository locus, except files shared
+with a current-attempt task undergoing artifact authorization; old receipts never authorize new
+episodes. Changed exempt-task files or in-scope paths outside task declarations refuse recording
+with a fresh-episode-review requirement rather than silently narrowing staging.
 
 `--reviews-file` is command-local: at **dispatch-wave** it carries sizing intent, while at
 **record-result** it still carries reviewer receipts keyed by task id. Keep those files separate.
