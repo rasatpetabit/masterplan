@@ -14,6 +14,13 @@ This skill is the entrypoint for Superpowers Masterplan on hosts without the
 Claude Code plugin manager. Its job is to load the canonical command prompt
 and adapt it to the current host runtime.
 
+Controller CLI scope repair follows commands §2a on every host: a
+`scope-amended-after-launch` recording refusal preserves the work. Use the audited
+`mp reauthorize-scope --state=PATH --wave=N --reason=TEXT` operation, or record
+approved task files through `mp amend-plan` / `mp amend-tasks` (which re-authorize
+in the same amendment event); never reset/clean work to clear that refusal.
+These controller operations are not additional reserved entry verbs.
+
 ## Host model
 
 - **Pi is the primary host.** It has the full fleet tool suite (file reads,

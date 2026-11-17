@@ -971,10 +971,10 @@ test('F-SCOPE snapshot: set-active-run --scope freezes the allow-set; promote pr
   const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'pending', wave: 0, files: ['a.js'] }] }));
   // 1) Launch-time snapshot: set-active-run --wave --scope freezes the resolved file union.
   const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]']).stdout);
-  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'] });
+  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'], scope_event_cursor: 0 });
   // 2) Promotion preserves the frozen scope through the phase-1 -> phase-2 transition.
   const prom = JSON.parse(run(['promote-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
-  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'] });
+  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'], scope_event_cursor: 0 });
   // 3) Simulate a ROGUE mid-wave widening of state.tasks[].files to include rogue.js — exactly the tamper
   //    the snapshot defends against. If verify-scope re-derived the allow-set from state (the pre-fix
   //    path), rogue.js would now be ALLOWED and this test would pass vacuously. It must instead read the
@@ -1004,10 +1004,10 @@ test('D6 baseline: set-active-run --baseline persists; promote carries it; verif
   const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'pending', wave: 0, files: ['a.js'] }] }));
   // 1) Launch: freeze BOTH the scope allow-set and the D6 `before` baseline into the phase-1 marker.
   const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]', '--baseline=["pre.js"]']).stdout);
-  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'], baseline: ['pre.js'] });
+  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'], baseline: ['pre.js'], scope_event_cursor: 0 });
   // 2) Promotion carries the baseline forward (mirror of scope) so a post-completion-crash resume still has it.
   const prom = JSON.parse(run(['promote-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
-  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'], baseline: ['pre.js'] });
+  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'], baseline: ['pre.js'], scope_event_cursor: 0 });
   // 3) finalize_run RESUME path: verify-scope is called with NO --before (the workflow result is gone),
   //    so it must fall back to active_run.baseline (['pre.js']). pre.js is in `before` -> excluded from the
   //    diff; a.js is in scope -> allowed; rogue.js is the out-of-scope breach the re-run still catches.

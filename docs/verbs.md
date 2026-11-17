@@ -203,7 +203,25 @@ not through the `/masterplan` reserved-verb list.
   render failure WARNs naming the stale bundle and exits non-zero, but the plan
   mutation stands durable). A later re-run of a plan-gated transition re-arms
   the plan gate at the amended hash, so an amended plan earns a fresh
-  cross-vendor pass.
+  cross-vendor pass. During an active wave, reads the current index (`--plan-index`,
+  recorded `plan_index_path`, or sibling `plan.index.json`) and synchronizes that
+  wave's existing task files. Records structured `task_files` and any widening of
+  `active_run.scope` in the same amendment event; other launch fields stay intact.
+
+- `reauthorize-scope` (controller CLI) — `mp reauthorize-scope --state=<path>
+  --wave=<n> --reason="…"`. Repairs a stale launch allow-set by unioning it with
+  current active-wave task files; never narrows. Requires an active run, actual
+  widening, a reason and matching structured task-file amendments recorded since
+  the launch event cursor. Appends `scope_reauthorized` with old/new scopes,
+  added entries and amendment log references, then atomically writes the scope.
+  Honors Guard D (`--session`/`--host`, or explicit `owner_lock=off`), preserving
+  every other marker field, dispatch history and watch baseline. A historical
+  prose-only amendment or pre-cursor marker is insufficient proof: use
+  `amend-plan`/`amend-tasks` to attest the approved files and re-authorize in the
+  same amendment transaction instead. See commands §2a's amendment section.
+  `record-result` refuses with `scope-amended-after-launch` before any mutation
+  if changed current-plan paths exceed frozen scope; committed recovery reports
+  the condition read-only as a preservation violation.
 
 - `set-render-config` (F4) — `mp set-render-config --state=<path> --images=on|off`
   toggles `state.render.images` (mirrors `set-review-config`; merge-updated so
@@ -276,8 +294,10 @@ is terminal for dispatch + finalize but operator-reversible.
   absent from the index. `--prune` drops only BARE `pending` (no accumulated
   state); dropping worked/blocked/waived tasks needs the additional
   `--prune-non-pending` consent (the `seed-tasks --force` hazard, gated).
-  Rejects a duplicate index id; re-renders an existing `plan.html` inline after
-  the commit.
+  Rejects a duplicate index id; holds Guard D and appends a `tasks_amended`
+  event with structured task files. If the active wave gains scope, that same
+  event audits the union-only re-authorization; no launch baseline is refreshed.
+  Re-renders an existing `plan.html` inline after the mutation.
 
 
 ## seed flags (fabric)

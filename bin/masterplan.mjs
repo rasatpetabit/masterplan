@@ -226,13 +226,14 @@ import {
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
 import { amendPlan } from '../lib/amend.mjs';
+import { readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope } from '../lib/scope-authorization.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity } from '../lib/finish.mjs';
 import { buildIntentIdentity, verifyCheckpointEvidence } from '../lib/checkpoint-evidence.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
-import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
+import { recordWaveResult, preflightAmendedScope, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
@@ -1349,6 +1350,17 @@ function readText(p) {
 }
 // Writes must never silently overwrite an un-migrated legacy bundle (that would lose the original
 // before it was backed up). Refuse and point at migrate-bundle, which backs up first.
+// Scope writers follow amend-plan's acquire/hold/release convention. Validation
+// is read-only and precedes acquisition; explicit owner_lock=off stays supported.
+function withScopeOwner(p, state, flags, mutate) {
+  if (state.concurrency?.owner_lock === 'off') return mutate();
+  const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
+  const acq = acquireOwner(bundleDir, self, { now, ttlMs });
+  if (acq.outcome === 'blocked') throw new Error('scope amendment: bundle is owned by another session — nothing written');
+  try { return mutate(); }
+  finally { releaseOwner(bundleDir, self, { now, ttlMs }); }
+}
+
 function loadForWrite(p) {
   const text = readText(p);
   const v = detectSchemaVersion(text);
@@ -2184,6 +2196,7 @@ function main() {
       // mutation. lib/bundle.mjs upsertTasks is pure (no fs/clock); this case owns fs/clock/render.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
+      if (state.status === 'archived') die('amend-tasks: bundle is archived');
       const planIndex = JSON.parse(readText(need(flags, 'plan-index')));
       const prune = flags.prune === true;
       const pruneNonPending = flags['prune-non-pending'] === true;
@@ -2202,7 +2215,17 @@ function main() {
             `(ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch, missing wave/parallel_group, ` +
             `or a non-integer wave value in plan.index.json.`, 1);
       }
-      writeState(p, up.state);
+      const ts = flags.ts ?? new Date().toISOString();
+      const widened = up.state.active_run?.scope
+        ? widenActiveScope(up.state, scopeContext(p, up.state), 'amend-tasks') : null;
+      const event = { type: 'tasks_amended', ts, task_files: taskFilesEvidence(up.state),
+        ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'tasks_amended', ts } } } : {}) };
+      withScopeOwner(p, state, flags, () => {
+        // Audit first: an interrupted state write may leave a recoverable stale
+        // scope, but must never leave a widened allow-set with no amendment proof.
+        appendEvent(p, event);
+        writeState(p, widened?.state ?? up.state);
+      });
       // Inline render-freshness AFTER the commit (mirror amend-plan): no-op when plan.html is absent,
       // never throws (WARNs + returns false on failure so the mutation stands durable).
       let renderOk = true;
@@ -2366,6 +2389,23 @@ function main() {
       // Validate the mutation BEFORE taking the lock — a refusal holds no lock and writes nothing.
       const amended = amendPlan({ planText, summary, detail, date: amendDate, archived: state.status === 'archived' });
       if (!amended.ok) die(`amend-plan: ${amended.error}`, 1);
+      // A controller amendment attests the current indexed files of active-wave tasks.
+      // Do not silently refresh other task state (amend-tasks owns that wider upsert).
+      let nextState = state;
+      if (Number.isInteger(state.active_run?.wave)) {
+        const indexPath = flags['plan-index'] ?? state.plan_index_path ?? path.join(dir, 'plan.index.json');
+        if (fs.existsSync(indexPath)) {
+          const index = JSON.parse(readText(indexPath));
+          const up = upsertTasks(state, index).state;
+          nextState = { ...state, tasks: (state.tasks ?? []).map(t => t.wave === state.active_run.wave
+            ? { ...t, files: up.tasks.find(u => String(u.id) === String(t.id))?.files ?? t.files } : t) };
+        }
+      }
+      const ts = flags.ts ?? new Date().toISOString();
+      const widened = nextState.active_run?.scope
+        ? widenActiveScope(nextState, scopeContext(p, nextState), summary) : null;
+      const event = { ...amended.event, ts, task_files: taskFilesEvidence(nextState),
+        ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'plan_amended', ts } } } : {}) };
       // Guard-D: hold the bundle owner lock across the mutation. A LIVE foreign owner -> die non-zero,
       // nothing written. All dieable validation is ABOVE this point (process.exit skips the finally).
       const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
@@ -2377,12 +2417,13 @@ function main() {
       }
       let renderOk = true;
       try {
-        // Commit: plan.md (tmp+rename, atomic) FIRST, then the plan_amended event append LAST as the
-        // commit point (mirrors the promotion transaction's artifact-then-event ordering).
+        // Plan artifact first, then amendment audit, then atomic state replacement.
+        // A crash cannot install a widened scope without its authorization event.
         const planMdTmp = planMdPath + '.tmp';
         fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
         fs.renameSync(planMdTmp, planMdPath);
-        appendEvent(p, { ...amended.event, ts: flags.ts ?? new Date().toISOString() });
+        appendEvent(p, event);
+        if (nextState !== state || widened) writeState(p, widened?.state ?? nextState);
         // Inline render-freshness AFTER the commit — reuses the shared plan.html re-render helper, which is
         // a no-op when plan.html is absent and NEVER throws (WARNs + returns false on failure).
         if (!rerenderRefsHtml(p, 'amend-plan')) renderOk = false;
@@ -2682,6 +2723,19 @@ function main() {
       out({ pending_gate: null });
       break;
     }
+    case 'reauthorize-scope': {
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      if (state.status === 'archived') die('reauthorize-scope: bundle is archived');
+      const widened = reauthorizeScope({ statePath: p, state, wave: coerceId(need(flags, 'wave')),
+        reason: String(need(flags, 'reason')) });
+      withScopeOwner(p, state, flags, () => {
+        appendEvent(p, { ...widened.event, ts: flags.ts ?? new Date().toISOString() });
+        writeState(p, widened.state);
+      });
+      out({ outcome: 'scope-reauthorized', ...widened.audit });
+      break;
+    }
     case 'set-active-run': {
       const p = need(flags, 'state');
       if (flags.kind !== undefined) {
@@ -2719,6 +2773,7 @@ function main() {
           die('set-active-run: --scope must be a JSON array of paths');
         }
         run.scope = scope;
+        run.scope_event_cursor = readScopeEvents(p).length;
       }
       // Optional --baseline (JSON array): the D6 `before` touched-set captured at LAUNCH (before any
       // agent ran). Persisted so that if the session dies AFTER `mp mark-task` but BEFORE the wave's
@@ -2780,6 +2835,7 @@ function main() {
       // back to the mutable state-only path. Preserve the frozen array set at phase-1.
       const run = { wave: prev.wave, run_id: need(flags, 'run-id'), task_id: need(flags, 'task-id') };
       if (Array.isArray(prev.scope)) run.scope = prev.scope;
+      if (Number.isInteger(prev.scope_event_cursor)) run.scope_event_cursor = prev.scope_event_cursor;
       // Carry the launch-time D6 baseline forward too (mirror of scope): the phase-2 marker is what a
       // post-completion-crash resume reads, so without this the finalize_run reconciliation would lose the
       // `before` set it needs to re-run verify-scope.
@@ -4114,6 +4170,13 @@ function main() {
           die('record-result: --reviews-file must be a JSON object keyed by task_id');
         }
       }
+      // Normal Phase B review ingestion itself writes audit state. Refuse stale
+      // scope before entering it; the transaction repeats this read-only guard.
+      if (!recoverySelector) {
+        const refused = preflightAmendedScope({ statePath, result,
+          worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined });
+        if (refused) { out(refused); break; }
+      }
       reviewNativeResult({
         host: cliDispatchHost(flags),
         worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
@@ -4156,6 +4219,10 @@ function main() {
             recovery: recoverySelector != null,
             recoverySelector,
           });
+          if (recRes.outcome === 'scope-amended-after-launch' || recRes.outcome === 'recovery-preservation-violation') {
+            out(recRes);
+            return;
+          }
           // Finalize the wave-dispatch record: the native launch persisted it as
           // 'pending' BEFORE spawn; a successful record-result closes that window so
           // the next attempt (or crash reconcile) sees 'recorded', not an

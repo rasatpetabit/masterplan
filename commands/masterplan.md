@@ -140,7 +140,7 @@ what to do when the engine's completion notification re-invokes the controller (
 
 **Completion** (re-invoked holding the engine's `<result>` — reached from §2 step 3):
 
-The whole record transaction is ONE subcommand — heartbeat → mark digests → D6 verify-scope →
+The whole record transaction is ONE subcommand — read-only amended-scope preflight → heartbeat → mark digests → D6 verify-scope →
 out-of-scope revert → split commit (code→WT, state→MAIN) → marker clear (iff the whole wave is done)
 → the `next` advisory — implemented in `lib/wave-commit.mjs`, crash-safe at every prefix (any crash resumes
 via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `--reconcile` mode):
@@ -170,12 +170,56 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
      `reject`, `error`, and incomplete harness coverage from the native review seam all land
      here. Failed/blocked tasks stay `pending` with the marker intact; `next` is
      `recover_wave` for ONLY those. `qctl` tasks hand to §6.
+   - `outcome:'scope-amended-after-launch'` → **nothing was written, reverted, cleaned or
+     committed**. `files[]` names changed paths outside the frozen launch scope but inside
+     the current active-wave task declarations. Use the audited controller operation
+     `mp reauthorize-scope --state=<path> --wave=<n> --reason="<approved amendment>"`
+     below, then retry recording. Do not reset/clean the work or refresh its baseline.
+     In committed recovery the same condition appears in `violations[]` under
+     `outcome:'recovery-preservation-violation'`, still read-only.
    - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
      breach. In-scope work stands. D6 is independent of review outcome.
    - Otherwise **narrate tersely** — at most a 1–2 line wave summary (what completed / what's
      next), NEVER the `state.yml` or `WORKLOG.md` diff (anti-flood) — and **re-enter the §2 loop**
      (step 4): `mp continue` derives the next op itself (the next wave's `dispatch_fabric`, or
      `run_skill finish`). On a goals-enabled bundle, fold a **one-line Intent reminder** into that terse summary — the run's Intent outcome line (from `goals.md`) keeps the end-state in view (§2a `goalsReminder`).
+
+### Active-wave plan amendments and scope re-authorization
+
+The launch allow-set remains the tamper guard: editing `plan.index.json` or
+`state.tasks[].files` alone never authorizes a larger recording scope. Changed paths
+inside the current wave's declarations but outside `active_run.scope` stop recording
+non-destructively; paths outside **both** scopes retain the existing revert behaviour.
+
+Use `mp amend-plan --state=<path> --summary="…" [--plan-index=<path>]` to record
+an approved plan amendment. During an active wave it synchronizes that wave's existing
+tasks' files from the index (explicit path, recorded `plan_index_path`, else sibling
+`plan.index.json`). Use `mp amend-tasks --state=<path> --plan-index=<path>` for the
+status-preserving full task upsert. Both record structured `task_files` and widen the
+active wave's scope in the **same amendment event**, under Guard D. No other launch
+fields, dispatch history or watch baseline are changed. A removed declaration never
+narrows the frozen scope. Neither operation grants approval for a product/plan change
+that the owner has not authorized.
+
+For a stale marker left by an earlier controller transaction, run:
+
+`mp reauthorize-scope --state=<path> --wave=<n> --reason="<why this amendment applies>"`
+
+Pass `--session=<owner-session> --host=<owner-host>` when Guard D is enabled. The
+controller unions the original allow-set with the current wave's task files, preserving
+all other marker fields. It requires a matching structured amendment for **each** task
+that adds scope, recorded after the marker's launch event cursor; it refuses a missing
+active wave, no widening, missing reason, or missing/mismatched amendment proof. The
+`scope_reauthorized` event names old/new scopes, added entries, reason and amendment
+log lines. Audit precedes the atomic widened-state write: an interruption can leave a
+stale scope to retry, never an unaudited widened allow-set.
+
+Historical prose-only amendments cannot prove task-file approval, and pre-cursor
+markers cannot prove the launch boundary. For those bundles, record the approved files
+with `amend-plan` or `amend-tasks` now; their same-event re-authorization repairs the
+stale scope without resetting/relaunching the wave or touching its work. Never hand-edit
+`active_run.scope` or the event log. These are controller CLI operations, not additional
+reserved `/masterplan` entry verbs.
 
 ## 2b — Parallel-plan dispatch + completion (the planning L1↔L2 seam)
 

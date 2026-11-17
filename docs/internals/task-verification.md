@@ -174,6 +174,50 @@ Review outcome and D6 scope verification are independent:
 - D6 still reverts undeclared writes **after** review, regardless of review approval;
 - review never substitutes for scope enforcement, and scope never invents review findings.
 
+## Amended scope and controller re-authorization
+
+`lib/scope-authorization.mjs` separates detection from authorization. The current
+`state.tasks[].files` of every active-wave task (done tasks included) identifies
+work to **preserve**, never work to authorize implicitly. Both sets use
+`canonicalizeScopePaths` and `pathWithinDeclaredScope`, including absolute main
+paths mapped into run loci and declared directory containment.
+
+Before any recording mutation, `preflightAmendedScope` / `recordWaveResult`
+capture the union of frozen and current declared loci and read the watch delta.
+Changed files outside frozen scope but inside current task scope yield
+`scope-amended-after-launch` with file names and an audited remedy. The CLI
+checks before native review ingestion can persist receipts or mutate a dispatch
+record; the transaction checks again for direct/reconcile callers. Watch
+snapshots use `git --no-optional-locks status`, so even the index stat cache is
+unchanged on refusal. Files outside both scopes retain normal checkout/clean
+behaviour. Recovery's `preflightRecovery` checks dirty paths, watch violations
+and the full frozen-base→recovered-HEAD delta read-only, reporting the same
+condition as a preservation violation.
+
+`set-active-run` and `continue` freeze `scope_event_cursor` (the number of
+existing event records) at launch; `promote-run` preserves it. Takeover does not
+move this boundary. `reauthorize-scope --state=PATH --wave=N --reason=TEXT`
+requires matching `task_files` evidence in `plan_amended` / `tasks_amended`
+events after that boundary for every task contributing new scope. Matching is
+by task id, wave and canonical file list, not summary interpretation. No active
+run, no frozen snapshot, no additions, empty reason or insufficient evidence
+refuses. Scope only grows: old entries are retained verbatim, new declarations
+are canonicalized. All other marker fields, dispatch records/history and the
+watch baseline remain untouched.
+
+`amend-plan` synchronizes active-wave existing tasks' indexed files; `amend-tasks`
+performs the full status-preserving upsert. Both attest structured `task_files`
+and include any `scope_reauthorization` (`old_scope`, `new_scope`,
+`added_entries`, `reason`, amendment identity) in their **own** amendment event.
+Explicit repair emits `scope_reauthorized`, referencing amendment event lines,
+types, timestamps and task ids. These controller writers hold Guard D across
+mutation (explicit `owner_lock=off` remains supported for the repair/upsert).
+The audit event precedes atomic widened-state replacement: a failed state write
+can leave stale scope to retry, not an unaudited allow-set. Historical prose-only
+amendments and markers without a cursor fail closed on explicit repair; record
+the approved files through an amend verb to repair them in the same event.
+No new `/masterplan` reserved entry verb is introduced.
+
 ## Summary of data flow for one wave
 
 ```
