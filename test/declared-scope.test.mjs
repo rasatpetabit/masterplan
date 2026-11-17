@@ -160,6 +160,11 @@ const coverage = [
   ['..', './', false],
   ['../x', 'a/../', false],
   ['..', 'a/..', false],
+  // A file path with interior '..' is judged by its canonical form.
+  ['a/b/../c', 'a/b/', false],
+  ['a/b/../b/c', 'a/b/', true],
+  ['/a/b/../c', '/a/b/', false],
+  ['/a/b/../b/c', '/a/b/', true],
   ['foo/../../x', '.', false],
   ['foo/../../x', './', false],
   ['/f', '.', false],
@@ -174,6 +179,8 @@ const coverage = [
   ['', '.', false],
   ['.', '', false],
   ['', '', true],
+  // A non-string scope entry covers nothing and does not throw.
+  ['f', null, false],
 ];
 
 test('pathWithinDeclaredScope: coverage table', () => {
