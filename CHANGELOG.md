@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Launch, watch, verification, and partial-wave staging judge an edit inside a declared directory with the same path canonicalization as same-wave disjointness. `.`, `./`, and a directory that normalizes to the relative root cover every relative path that does not climb out. `\` is a separator and a trailing directory marker, and spellings that normalize to the same path match (`src\\`, `src//`, `a/./b`). An absolute path and a relative one still do not cover each other. A directory does not cover the same path without its trailing slash (`src/` does not cover `src`).
+
 ## [10.2.2] — 2026-11-17
 
 Tasks in one wave must touch separate files, and that check now compares declarations as paths: a directory

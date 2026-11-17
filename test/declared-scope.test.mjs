@@ -1,9 +1,9 @@
-// test/declared-scope.test.mjs — path-overlap rule for same-wave disjointness.
-// pathWithinDeclaredScope's launch/watch/verification behaviour is intentionally not
-// re-specified here; these tests cover declarationsOverlap only.
+// test/declared-scope.test.mjs — path overlap for same-wave disjointness, and the
+// same canonical coverage for launch, watch, verification, and partial-wave staging.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { declarationsOverlap } from '../lib/declared-scope.mjs';
+import { declarationsOverlap, pathWithinDeclaredScope } from '../lib/declared-scope.mjs';
+import { verifyScope } from '../lib/wave.mjs';
 
 test('declarationsOverlap: equal declarations overlap', () => {
   assert.equal(declarationsOverlap('src/f', 'src/f'), true);
@@ -106,4 +106,175 @@ test('declarationsOverlap: an empty declaration is not the relative root', () =>
   assert.equal(declarationsOverlap('', 'f'), false);
   assert.equal(declarationsOverlap('f', ''), false);
   assert.equal(declarationsOverlap('', ''), true);
+});
+
+// file, scope, expected. Scope is one declaration; pathWithinDeclaredScope takes a list.
+const coverage = [
+  ['src/f', 'src/f', true],
+  ['a/./b', 'a/b', true],
+  ['a/b', 'a/./b', true],
+  ['a/b', 'a//b', true],
+  ['a//b', 'a/b', true],
+  ['src\\x', 'src/x', true],
+  ['src/x', 'src\\x', true],
+  ['/a/./b', '/a/b', true],
+  ['src/f', 'src/', true],
+  ['src/a/b', 'src/', true],
+  ['src//f', 'src/', true],
+  ['src/f', 'src//', true],
+  ['src/f', 'src\\', true],
+  ['src\\f', 'src\\', true],
+  ['src/f', 'src\\/', true],
+  ['sibling/src/f', 'sibling\\src\\', true],
+  ['src/f', 'src', false],
+  ['src', 'src/', false],
+  ['src', 'src\\', false],
+  ['src', 'src//', false],
+  ['src/', 'src', false],
+  ['srcx/f', 'src/', false],
+  ['srcx/f', 'src\\', false],
+  ['srcx/f', 'src//', false],
+  ['src/foobar', 'src/foo', false],
+  ['src/foo', 'src/foobar', false],
+  ['src\\foo', 'src\\foobar', false],
+  ['lib/a', 'src/', false],
+  ['lib/a', 'src\\', false],
+  ['f', '.', true],
+  ['src/a', '.', true],
+  ['./f', '.', true],
+  ['f', './', true],
+  ['src/a', './', true],
+  ['f', 'a/..', true],
+  ['f', 'a/../', true],
+  ['a/../f', 'a/../', true],
+  ['a/../f', 'a/..', true],
+  ['src/a', '.\\', true],
+  ['src/a', '././', true],
+  ['foo/../bar', '.', true],
+  ['../x', '.', false],
+  ['..', '.', false],
+  ['./..', '.', false],
+  ['./..', './', false],
+  ['./../x', './', false],
+  ['../x', './', false],
+  ['..', './', false],
+  ['../x', 'a/../', false],
+  ['..', 'a/..', false],
+  ['foo/../../x', '.', false],
+  ['foo/../../x', './', false],
+  ['/f', '.', false],
+  ['/f', './', false],
+  ['/abs', '.', false],
+  ['f', '/', false],
+  ['/src/f', 'src/', false],
+  ['src/f', '/src/', false],
+  ['/src/f', '/src/', true],
+  ['', 'f', false],
+  ['f', '', false],
+  ['', '.', false],
+  ['.', '', false],
+  ['', '', true],
+];
+
+test('pathWithinDeclaredScope: coverage table', () => {
+  for (const [file, scope, expected] of coverage) {
+    assert.equal(
+      pathWithinDeclaredScope(file, [scope]),
+      expected,
+      `${JSON.stringify(file)} in ${JSON.stringify(scope)}`,
+    );
+  }
+});
+
+test('pathWithinDeclaredScope: canonical spelling covers a child', () => {
+  assert.equal(pathWithinDeclaredScope('src/f', ['src\\']), true);
+  assert.equal(pathWithinDeclaredScope('src\\x', ['src\\']), true);
+  assert.equal(pathWithinDeclaredScope('src/f', ['src//']), true);
+  assert.equal(pathWithinDeclaredScope('a/b', ['a/./b']), true);
+  assert.equal(pathWithinDeclaredScope('a/./b', ['a/b']), true);
+  assert.equal(pathWithinDeclaredScope('srcx/f', ['src\\']), false);
+  assert.equal(pathWithinDeclaredScope('srcx/f', ['src//']), false);
+});
+
+test('pathWithinDeclaredScope: relative root covers a relative child', () => {
+  assert.equal(pathWithinDeclaredScope('f', ['.']), true);
+  assert.equal(pathWithinDeclaredScope('src/a', ['./']), true);
+  assert.equal(pathWithinDeclaredScope('f', ['a/..']), true);
+  assert.equal(pathWithinDeclaredScope('a/../f', ['a/../']), true);
+  assert.equal(pathWithinDeclaredScope('../x', ['.']), false);
+  assert.equal(pathWithinDeclaredScope('..', ['./']), false);
+  assert.equal(pathWithinDeclaredScope('./..', ['./']), false);
+  assert.equal(pathWithinDeclaredScope('./../x', ['.']), false);
+  assert.equal(pathWithinDeclaredScope('/f', ['.']), false);
+  assert.equal(pathWithinDeclaredScope('/f', ['./']), false);
+});
+
+test('pathWithinDeclaredScope: directory does not cover its bare path', () => {
+  assert.equal(pathWithinDeclaredScope('src', ['src/']), false);
+  assert.equal(pathWithinDeclaredScope('src', ['src\\']), false);
+  assert.equal(pathWithinDeclaredScope('src', ['src//']), false);
+  assert.equal(pathWithinDeclaredScope('src/f', ['src/']), true);
+});
+
+test('pathWithinDeclaredScope: empty and non-strings are not directories', () => {
+  assert.equal(pathWithinDeclaredScope('f', ['']), false);
+  assert.equal(pathWithinDeclaredScope('', ['f']), false);
+  assert.equal(pathWithinDeclaredScope('', ['']), true);
+  assert.equal(pathWithinDeclaredScope('f', [null]), false);
+  assert.equal(pathWithinDeclaredScope(null, ['src/']), false);
+  assert.equal(pathWithinDeclaredScope(null, [null]), true);
+  assert.equal(pathWithinDeclaredScope('f', [1]), false);
+});
+
+test('pathWithinDeclaredScope: coverage implies declarationsOverlap', () => {
+  const vocabulary = [
+    '', '.', './', '.\\', '..', '../x', 'f', 'src', 'src/', 'src\\', 'src//', 'src\\x',
+    'src/f', 'src/x', 'srcx/f', 'a/..', 'a/../', 'a/../f', 'a/./b', 'a/b', 'a//b',
+    '/f', '/src/', '/src/f', 'src/foo', 'src/foobar', 'sibling/src/f', 'sibling\\src\\',
+    'foo/../../x', 'foo/../bar', './f', 'src\\/', 'lib/a', 'src/',
+  ];
+  const pairs = [];
+  const seen = new Set();
+  const add = (file, scope) => {
+    const key = `${JSON.stringify(file)}\0${JSON.stringify(scope)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairs.push([file, scope]);
+  };
+  for (const [file, scope] of coverage) add(file, scope);
+  for (const file of vocabulary) {
+    for (const scope of vocabulary) add(file, scope);
+  }
+  const segs = ['a', 'b', '.', '..', 'src'];
+  for (const left of segs) {
+    for (const right of segs) {
+      add(`${left}/${right}`, `${left}/${right}`);
+      add(`${left}/${right}`, `${left}/`);
+      add(`${left}\\${right}`, `${left}\\`);
+      add(`${left}//${right}`, `${left}//`);
+      add(`${left}/./${right}`, `${left}/${right}`);
+      add(`/${left}/${right}`, `${left}/`);
+      add(`/${left}/${right}`, `/${left}/`);
+    }
+  }
+  for (const [file, scope] of pairs) {
+    if (!pathWithinDeclaredScope(file, [scope])) continue;
+    assert.equal(
+      declarationsOverlap(file, scope),
+      true,
+      `covered but no overlap: ${JSON.stringify(file)} in ${JSON.stringify(scope)}`,
+    );
+  }
+});
+
+test('verifyScope: a dot or backslash directory accepts an edit inside it and refuses one outside', () => {
+  const dot = verifyScope(['.'], [], ['src/inside.js', '../outside.js']);
+  assert.equal(dot.ok, false);
+  assert.deepEqual(dot.outOfScope, ['../outside.js']);
+  const slash = verifyScope(['src\\'], [], ['src/inside.js', 'lib/outside.js']);
+  assert.equal(slash.ok, false);
+  assert.deepEqual(slash.outOfScope, ['lib/outside.js']);
+  const held = verifyScope(['.'], ['../outside.js'], ['../outside.js', 'src/inside.js']);
+  assert.equal(held.ok, true);
+  assert.deepEqual(held.outOfScope, []);
 });
