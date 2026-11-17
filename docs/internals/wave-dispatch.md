@@ -34,9 +34,11 @@ state fields (`id`, `wave`, `status`, `files`) with its `plan.index.json` fields
 `dispatchWaveViaFabric` / descriptor construction. Native spawn descriptors carry only the task
 class and payload — routing is resolved from the checked-in policy `policy/workflow-map.json`.
 Before that payload is returned, `checkWaveDisjoint` refuses the wave when two tasks' resolved
-declarations overlap as paths: a directory declaration (ending in `/`) covers that directory and
-everything under it, and spellings that normalize to the same path overlap. The conflict lists
-the declarations as written.
+declarations overlap as paths: a directory declaration (ending in `/` or `\`, or a bare `.`) covers
+that directory and everything under it, `\` is a separator, and spellings that normalize to the
+same path overlap. The current directory covers relative paths that do not climb out of it;
+absolute and relative declarations do not cover each other. The conflict lists the declarations
+as written.
 
 All dispatch *decision* logic — `routeTask`, the qctl backend gate, host detection, and the
 wave-dispatch op shapes — lives in the pure `lib/dispatch/` package (import via

@@ -58,3 +58,52 @@ test('declarationsOverlap: .. inside a declaration is lexical and does not need 
   assert.equal(declarationsOverlap('a/../../b', '../b'), true);
   assert.equal(declarationsOverlap('../b', 'b'), false);
 });
+
+test('declarationsOverlap: a directory that normalizes to the current directory overlaps its child', () => {
+  assert.equal(declarationsOverlap('a/../', 'a/../f'), true);
+  assert.equal(declarationsOverlap('a/../f', 'a/../'), true);
+});
+
+test('declarationsOverlap: ./ overlaps a relative child', () => {
+  assert.equal(declarationsOverlap('./', 'f'), true);
+  assert.equal(declarationsOverlap('f', './'), true);
+});
+
+test('declarationsOverlap: ./ does not overlap a path that climbs out', () => {
+  assert.equal(declarationsOverlap('./', '../x'), false);
+  assert.equal(declarationsOverlap('../x', './'), false);
+});
+
+test('declarationsOverlap: a bare dot is the current directory', () => {
+  assert.equal(declarationsOverlap('.', 'f'), true);
+  assert.equal(declarationsOverlap('src/a', '.'), true);
+  assert.equal(declarationsOverlap('.', '../x'), false);
+  assert.equal(declarationsOverlap('../x', '.'), false);
+});
+
+test('declarationsOverlap: a backslash is a separator and a trailing directory marker', () => {
+  assert.equal(declarationsOverlap('src\\', 'src\\f'), true);
+  assert.equal(declarationsOverlap('src\\f', 'src\\'), true);
+  assert.equal(declarationsOverlap('sibling\\src\\', 'sibling/src/f'), true);
+  assert.equal(declarationsOverlap('sibling/src/f', 'sibling\\src\\'), true);
+  assert.equal(declarationsOverlap('a\\b', 'a/b'), true);
+  assert.equal(declarationsOverlap('a/b', 'a\\b'), true);
+  assert.equal(declarationsOverlap('src\\foo', 'src\\foobar'), false);
+  assert.equal(declarationsOverlap('src\\foobar', 'src\\foo'), false);
+});
+
+test('declarationsOverlap: absolute and relative declarations do not cover each other', () => {
+  assert.equal(declarationsOverlap('./', '/f'), false);
+  assert.equal(declarationsOverlap('/f', './'), false);
+  assert.equal(declarationsOverlap('.', '/abs'), false);
+  assert.equal(declarationsOverlap('/', 'f'), false);
+  assert.equal(declarationsOverlap('f', '/'), false);
+  assert.equal(declarationsOverlap('src/', '/src/f'), false);
+  assert.equal(declarationsOverlap('/src/', 'src/f'), false);
+});
+
+test('declarationsOverlap: an empty declaration is not the relative root', () => {
+  assert.equal(declarationsOverlap('', 'f'), false);
+  assert.equal(declarationsOverlap('f', ''), false);
+  assert.equal(declarationsOverlap('', ''), true);
+});
