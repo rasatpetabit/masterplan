@@ -111,6 +111,17 @@ test('tasks sharing a file are serialised into different waves', () => {
   assert.notEqual(byDesc(index, 'a').wave, byDesc(index, 'b').wave);
 });
 
+test('tasks whose declarations overlap as a directory and a child are serialised into different waves', () => {
+  const index = mergePlanFragments([
+    frag('s', [
+      task('dir', { files: ['src/'] }),
+      task('child', { files: ['src/f.js'] }),
+    ]),
+  ]);
+  assert.notEqual(byDesc(index, 'dir').wave, byDesc(index, 'child').wave);
+  assert.deepEqual(validatePlanIndex(index), []);
+});
+
 test('a dependency forces the dependent into a strictly higher wave', () => {
   const index = mergePlanFragments([
     frag('s', [
@@ -242,6 +253,54 @@ test('validatePlanIndex rejects same-wave file overlap', () => {
   ] };
   const errors = validatePlanIndex(bad);
   assert.ok(errors.some((e) => /shared\.js/.test(e) && /wave/i.test(e)));
+});
+
+function declaredTokens(error) {
+  const match = String(error).match(/share file\(s\) (.*) —/);
+  return match ? match[1].split(', ') : [];
+}
+
+test('validatePlanIndex rejects a same-wave directory declaration that contains another task path', () => {
+  const bad = { schema_version: '6.0', tasks: [
+    { id: 1, description: 'x', wave: 0, files: ['src/f'], verify_commands: [], codex: null },
+    { id: 2, description: 'y', wave: 0, files: ['src/'], verify_commands: [], codex: null },
+  ] };
+  const errors = validatePlanIndex(bad);
+  assert.equal(errors.length, 1);
+  const tokens = declaredTokens(errors[0]);
+  assert.ok(tokens.includes('src/f'), errors[0]);
+  assert.ok(tokens.includes('src/'), errors[0]);
+});
+
+test('validatePlanIndex rejects same-wave spelling variants of one path', () => {
+  const bad = { schema_version: '6.0', tasks: [
+    { id: 1, description: 'x', wave: 0, files: ['a/./b'], verify_commands: [], codex: null },
+    { id: 2, description: 'y', wave: 0, files: ['a/b'], verify_commands: [], codex: null },
+    { id: 3, description: 'z', wave: 0, files: ['a//c'], verify_commands: [], codex: null },
+    { id: 4, description: 'w', wave: 0, files: ['a/c'], verify_commands: [], codex: null },
+  ] };
+  const errors = validatePlanIndex(bad);
+  assert.ok(errors.some((e) => declaredTokens(e).includes('a/./b') && declaredTokens(e).includes('a/b')));
+  assert.ok(errors.some((e) => declaredTokens(e).includes('a//c') && declaredTokens(e).includes('a/c')));
+  assert.equal(errors.length, 2, errors.join('\n'));
+});
+
+test('validatePlanIndex accepts directory and spelling pairs when they are in different waves', () => {
+  const index = { schema_version: '6.0', tasks: [
+    { id: 1, description: 'x', wave: 0, files: ['src/'], verify_commands: [], codex: null },
+    { id: 2, description: 'y', wave: 1, files: ['src/f'], verify_commands: [], codex: null },
+    { id: 3, description: 'z', wave: 0, files: ['a/./b'], verify_commands: [], codex: null },
+    { id: 4, description: 'w', wave: 1, files: ['a/b'], verify_commands: [], codex: null },
+  ] };
+  assert.deepEqual(validatePlanIndex(index), []);
+});
+
+test('validatePlanIndex accepts a same-wave index of exact distinct files', () => {
+  const index = { schema_version: '6.0', tasks: [
+    { id: 1, description: 'x', wave: 0, files: ['a.js', 'b.js'], verify_commands: [], codex: null },
+    { id: 2, description: 'y', wave: 0, files: ['c.js'], verify_commands: [], codex: null },
+  ] };
+  assert.deepEqual(validatePlanIndex(index), []);
 });
 
 // ── narrative meta round-trip + back-compat accept-and-ignore ────────────────

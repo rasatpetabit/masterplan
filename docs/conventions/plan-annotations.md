@@ -28,7 +28,7 @@ Emit these exact keys — the canonical names `lib/dispatch/routing.mjs`, `apply
 | field | type | meaning |
 |---|---|---|
 | `description` | string (required) | What the task does. Routing scans **this** field for design-judgment / sensitive verbs — never `name`/`title`. |
-| `files` | array of repo-relative paths | Declared write scope. `> 3` files ⇒ Codex-ineligible by heuristic. Same-wave tasks MUST have disjoint `files`. |
+| `files` | array of repo-relative paths | Declared write scope. `> 3` files ⇒ Codex-ineligible by heuristic. Same-wave tasks MUST have disjoint `files`, compared as paths (a trailing `/` is that directory and everything under it; equivalent spellings overlap). |
 | `verify_commands` | array of shell strings | Commands that prove the task. **Empty ⇒ Codex-ineligible** and unverifiable (the implementer reports that fact). |
 | `codex` | string `"ok"` \| `"no"` \| `null` | Routing override; `null` defers to the heuristic. **Never a boolean** (trap 1). |
 | `sensitive` | bool (optional) | `true` ⇒ Codex-ineligible (also auto-detected from `description`). |
@@ -80,10 +80,15 @@ These fail by doing the **wrong** thing, not by erroring:
 ## Wave / parallelism rule
 
 Tasks in the **same wave** MUST have **disjoint `files`** — the L2 engine runs a wave as
-a `parallel()` barrier and each implementer asserts its own scope post-run. On the parallel
-path the merge enforces this automatically (file-conflict wave bump); on the serial path
-the planner hand-assigns waves so same-wave file sets are disjoint. `mp validate-plan-index`
-rejects any plan that violates it.
+a `parallel()` barrier and each implementer asserts its own scope post-run. Disjointness
+compares declarations as paths, not as exact strings. A directory declaration (a path ending
+in `/`) overlaps that directory and everything under it. Spellings that normalize to the same
+POSIX path overlap, including `.` segments, duplicate slashes, and a trailing slash versus the
+same path without one. A shared prefix that is not on a `/` boundary does not (`src/foo` does
+not overlap `src/foobar`). On the parallel path the merge enforces this automatically
+(file-conflict wave bump); on the serial path the planner hand-assigns waves so same-wave
+file sets are disjoint. `mp validate-plan-index` rejects any plan that violates it, and names
+the declarations as written. Dispatch rechecks the resolved file sets the same way.
 
 
 ## Yocto / yanos-builder image tasks (verify + intent)

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Same-wave disjointness compares declarations as paths, closing the v10.2.1 known limitation for newly loaded or amended plans. A directory declaration (a path ending in `/`) overlaps that directory and everything under it, and spellings that normalize to the same path overlap (`a/./b`, `a//b`, a trailing slash versus the same path without one). `validatePlanIndex` and dispatch-time `checkWaveDisjoint` both apply this rule and report the declarations as written; the parallel-plan file-conflict bump uses it too, so a merge does not emit a same-wave overlap the validator would reject. Already-dispatched waves are not repaired.
+
 ## [10.2.1] — 2026-11-16
 
 A wave whose tasks finish in different dispatch attempts now records and completes: each task is judged

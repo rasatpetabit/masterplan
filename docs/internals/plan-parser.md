@@ -76,9 +76,11 @@ writes artifacts or commits.
    wins among ready nodes) produces a processing order. For each task in that order:
 
    - `wave = max(wave of each dep) + 1`, or `0` if no deps.
-   - **File-conflict bump:** while any already-placed task at the same wave shares a declared
-     file with this task, increment `wave`. The bump repeats until the task's file set is
-     disjoint from every same-wave peer.
+   - **File-conflict bump:** while any already-placed task at the same wave overlaps a declared
+     path with this task, increment `wave`. Overlap is path comparison: a directory declaration
+     (ending in `/`) covers that directory and its contents, and spellings that normalize to the
+     same path overlap. The bump repeats until the task's declarations are disjoint from every
+     same-wave peer.
 
    Result: disjoint, dependency-free tasks share the lowest possible wave (maximal safe
    parallelism); tasks that must sequence do so. Wave numbers are derived entirely from the
@@ -119,7 +121,9 @@ gate). Checks:
 - `codex` is `"ok"`, `"no"`, `null`, or absent. Any other shape is an error; the error message
   names the silent-routing-fallthrough trap explicitly.
 - `files` and `verify_commands`, if present, are arrays.
-- No two tasks in the same wave share a declared file.
+- No two tasks in the same wave have overlapping declarations. Declarations are compared as
+  paths: a directory declaration (ending in `/`) covers that path and everything under it, and
+  equivalent spellings overlap. The error names the declarations as written.
 
 Returns an array of human-readable error strings; empty means valid. Never throws.
 

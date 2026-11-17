@@ -239,6 +239,42 @@ test('checkWaveDisjoint: tolerates missing/empty files and an empty/absent list'
   assert.deepEqual(r, { ok: true, conflicts: [] });
 });
 
+test('checkWaveDisjoint: a directory declaration and a child in one wave are a conflict naming both', () => {
+  const r = checkWaveDisjoint([
+    { id: 1, files: ['src/'] },
+    { id: 2, files: ['src/f'] },
+  ]);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.conflicts, [{ a: 1, b: 2, shared: ['src/', 'src/f'] }]);
+});
+
+test('prepareWave throws when a same-wave directory declaration contains another task path', () => {
+  const st = {
+    tasks: [
+      { id: 1, wave: 0, status: 'pending', files: ['src/'] },
+      { id: 2, wave: 0, status: 'pending', files: ['src/f'] },
+    ],
+  };
+  const pidx = {
+    tasks: [
+      { id: 1, description: 'a', files: ['src/'], verify_commands: ['node --test'], codex: null },
+      { id: 2, description: 'b', files: ['src/f'], verify_commands: ['node --test'], codex: null },
+    ],
+  };
+  assert.throws(
+    () => prepareWave(st, pidx, 0, {}, {}),
+    (err) => {
+      assert.match(err.message, /collide on shared file\(s\) at dispatch/);
+      const match = err.message.match(/share \[(.*?)\]/);
+      assert.ok(match, err.message);
+      const tokens = match[1].split(', ');
+      assert.ok(tokens.includes('src/'), err.message);
+      assert.ok(tokens.includes('src/f'), err.message);
+      return true;
+    },
+  );
+});
+
 // --- declaredScope: the allowed-dirty union (done included) -------------------------------
 
 test('declaredScope unions ALL wave tasks files, done included', () => {
