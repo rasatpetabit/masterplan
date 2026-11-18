@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.4] — 2026-11-18
+
+A plan amendment that widens the files of a task in the active wave now reaches the wave's frozen
+launch scope. Before, `record-result` judged those files out of scope and reverted them with
+`git checkout --`, losing finished work.
+
+### Fixed
+
+- `record-result` refuses with `scope-amended-after-launch`, before any state write, revert or commit,
+  when changed files lie outside the frozen launch scope but inside the active wave's current task
+  files. Files outside both scopes are still reverted. Committed-recovery mode reports the condition
+  read-only.
+- `amend-plan` and `amend-tasks` widen the active wave's launch scope to the amended task files in the
+  same transaction, recording the old and new scope in the amendment event before the state write.
+- An amendment interrupted by a failed state write no longer loses finished work: `record-result`
+  preserves changed files that match the surviving amendment audit, without granting scope authority
+  from the log alone. Rerun the approved amend verb to complete the state write.
+
+### Added
+
+- `mp reauthorize-scope --state=PATH --wave=N --reason=TEXT`: widen-only, audited re-authorization
+  of the active wave's launch scope, backed by a recorded task-file amendment since launch.
+
 ## [10.2.3] — 2026-11-17
 
 Launch, watch, verification and partial-wave staging now read a declared directory the way the v10.2.2
