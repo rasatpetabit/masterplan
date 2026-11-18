@@ -184,15 +184,15 @@ paths mapped into run loci and declared directory containment.
 
 Before any recording mutation, `preflightAmendedScope` / `recordWaveResult`
 capture the union of frozen and current declared loci and read the watch delta.
-Changed files outside frozen scope but inside current task scope yield
-`scope-amended-after-launch` with file names and an audited remedy. The CLI
-checks before native review ingestion can persist receipts or mutate a dispatch
+Changed files outside frozen scope that match current task declarations or a
+matching amendment audit yield `scope-amended-after-launch`. The CLI checks
+before native review ingestion can persist receipts or mutate a dispatch
 record; the transaction checks again for direct/reconcile callers. Watch
 snapshots use `git --no-optional-locks status`, so even the index stat cache is
-unchanged on refusal. Files outside both scopes retain normal checkout/clean
-behaviour. Recovery's `preflightRecovery` checks dirty paths, watch violations
-and the full frozen-base→recovered-HEAD delta read-only, reporting the same
-condition as a preservation violation.
+unchanged on refusal. Unrelated files retain normal checkout/clean behaviour.
+Recovery's `preflightRecovery` checks dirty paths, watch violations and the full
+frozen-base→recovered-HEAD delta read-only, reporting the same condition as a
+preservation violation.
 
 `set-active-run` and `continue` freeze `scope_event_cursor` (the number of
 existing event records) at launch; `promote-run` preserves it. Takeover does not
@@ -213,9 +213,13 @@ Explicit repair emits `scope_reauthorized`, referencing amendment event lines,
 types, timestamps and task ids. These controller writers hold Guard D across
 mutation (explicit `owner_lock=off` remains supported for the repair/upsert).
 The audit event precedes atomic widened-state replacement: a failed state write
-can leave stale scope to retry, not an unaudited allow-set. Historical prose-only
-amendments and markers without a cursor fail closed on explicit repair; record
-the approved files through an amend verb to repair them in the same event.
+can leave both declarations and scope stale. For preservation only, recording
+checks structured amendment files for this wave after the launch cursor. A
+marker without a cursor conservatively preserves additions from same-wave
+widening audits whose old scope is covered by the frozen scope. Neither supplies
+authority when declarations are absent from state. Rerun the approved amend verb
+if the state write was interrupted; use it also when explicit re-authorization
+has no launch cursor or only prose amendment evidence.
 No new `/masterplan` reserved entry verb is introduced.
 
 ## Summary of data flow for one wave

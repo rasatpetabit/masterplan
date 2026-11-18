@@ -6,12 +6,12 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
-import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { recordWaveResult, captureWtFiles, captureWorkspaceRoot } from '../lib/wave-commit.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { preflightRecovery } from '../lib/recovery-preflight.mjs';
-import { captureWtFiles, captureWorkspaceRoot } from '../lib/wave-commit.mjs';
+import { composeWaveDispatchKey } from '../lib/dispatch-wave.mjs';
 const cli = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const dirs = [];
 afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
@@ -40,7 +40,7 @@ function fixture() {
   const index = path.join(bundle, 'plan.index.json');
   put(bundle, 'plan.index.json', JSON.stringify({ tasks: [{ id: 1, wave: 1, files: ['src/'] }] }));
   writeWatchBaseline(bundle, 1, captureWatchBaseline({ mainRoot: MAIN, bundleDir: bundle, worktree: WT, slug: 'scope', scopePaths: ['src/a'] }));
-  return { MAIN, WT, bundle, statePath, mp, index };
+  return { MAIN, WT, bundle, statePath, mp, index, tmp };
 }
 // Model an older controller's amendment transaction: task files and an audited
 // structured amendment change, but the active scope remains frozen. New amend
@@ -52,16 +52,115 @@ function legacyAmend(fx, { recorded = true, files = ['src/'] } = {}) {
   state.tasks[0].files = files; writeState(fx.statePath, state);
 }
 function snapshot(fx) {
-  return { state: fs.readFileSync(fx.statePath).toString('hex'),
-    head: git(fx.WT, 'rev-parse', 'HEAD'), main: git(fx.MAIN, 'rev-parse', 'HEAD'),
-    index: fs.readFileSync(path.join(fx.MAIN, '.git/worktrees/scope/index')).toString('hex'),
+  const bundleBytes = f => fs.existsSync(path.join(fx.bundle, f)) ? fs.readFileSync(path.join(fx.bundle, f), 'utf8') : null;
+  return { state: fs.readFileSync(fx.statePath, 'utf8'),
+    refs: git(fx.MAIN, 'show-ref'), head: git(fx.WT, 'rev-parse', 'HEAD'),
+    status: [fx.MAIN, fx.WT].map(repo => git(repo, '--no-optional-locks', 'status', '--porcelain')),
+    indexes: ['index', 'worktrees/scope/index'].map(f => fs.readFileSync(path.join(fx.MAIN, '.git', f)).toString('hex')),
     bytes: ['src/a', 'src/b', 'rogue'].map(f => fs.readFileSync(path.join(fx.WT, f), 'utf8')),
-    events: fs.existsSync(path.join(fx.bundle, 'events.jsonl')) ? fs.readFileSync(path.join(fx.bundle, 'events.jsonl'), 'utf8') : '' };
+    events: bundleBytes('events.jsonl'), dispatch: bundleBytes('wave-1.dispatch.json'), watch: bundleBytes('.wave-1.watch.json') };
 }
 const events = fx => fs.readFileSync(path.join(fx.bundle, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 const record = (fx, extra = {}) => recordWaveResult({ statePath: fx.statePath,
   result: { wave: 1, tasks: [{ task_id: 1, digest: { task_id: 1, status: 'done' } }] }, ...extra });
 const reauth = fx => fx.mp('reauthorize-scope', '--wave=1', '--reason=approved amendment');
+const resultArg = '--result=' + JSON.stringify({ wave: 1, tasks: [{ task_id: 1, digest: { task_id: 1, status: 'done' } }] });
+const cliRecord = (fx, ...args) => {
+  const res = fx.mp('record-result', resultArg, ...args);
+  assert.equal(res.status, 0, `${res.stderr}\n${res.stdout}`);
+  return JSON.parse(res.stdout);
+};
+function launchReview(fx) {
+  const base = git(fx.WT, 'rev-parse', 'HEAD');
+  put(fx.bundle, 'wave-1.dispatch.json', JSON.stringify({
+    key: composeWaveDispatchKey('scope', 1), run_id: 'scope', wave: 1, status: 'pending', attempt: 1,
+    review_context: { enabled: true, base_sha: base,
+      episodes: { 1: { subject: `${fx.MAIN}::docs/masterplan/scope/wave-1/task-1` } },
+      tasks: [{ task_id: 1, repo: fx.WT, class: 'bounded-edit' }] },
+  }));
+}
+function reviewFile(fx, receipt = {}) {
+  put(fx.tmp, 'reviews.json', JSON.stringify({ 1: {
+    final_verdict: 'approve', findings: [], blocking_findings: [], summary: 'reviewed',
+    harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false,
+      regions_unreviewed: 0, extraction_degraded: false }, ...receipt,
+  } }));
+  return '--reviews-file=' + path.join(fx.tmp, 'reviews.json');
+}
+function interruptAmendment(fx, ...args) {
+  // Block the temp write, not the event append; execute the real CLI mutation.
+  const before = fs.readFileSync(fx.statePath, 'utf8');
+  const blocker = fx.statePath + '.tmp';
+  fs.mkdirSync(blocker);
+  try {
+    const res = fx.mp(...args);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /EISDIR.*state\.yml\.tmp/);
+  } finally { fs.rmdirSync(blocker); }
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
+  const event = events(fx).at(-1);
+  assert.deepEqual(event.task_files, [{ id: 1, wave: 1, files: ['src/'] }]);
+  assert.deepEqual(event.scope_reauthorization.added_entries, ['src/']);
+}
+
+for (const legacy of [false, true]) test(legacy
+  ? 'interrupted amend-tasks with no launch cursor refuses before native Phase B writes'
+  : 'interrupted amend-plan CLI recording preserves audited work and lets the controller finish', () => {
+  const fx = fixture();
+  const args = legacy ? ['amend-tasks', '--plan-index=' + fx.index]
+    : ['amend-plan', '--summary=approved wider scope', '--session=test', '--host=test'];
+  const reviewArgs = legacy ? [reviewFile(fx)] : [];
+  if (legacy) {
+    const state = readState(fx.statePath);
+    delete state.active_run.scope_event_cursor;
+    writeState(fx.statePath, state);
+    launchReview(fx);
+  }
+  interruptAmendment(fx, ...args);
+  put(fx.WT, 'src/b', 'audited but not yet authorized\n');
+  put(fx.WT, 'rogue', 'unrelated worktree edit\n');
+  const before = snapshot(fx);
+  const auth = reauth(fx);
+  assert.notEqual(auth.status, 0, 'the log alone must not authorize wider scope');
+  assert.match(auth.stderr, /nothing would change/);
+  const out = cliRecord(fx, ...reviewArgs);
+  const after = snapshot(fx);
+  assert.deepEqual({ bytes: after.bytes, outcome: out.outcome, files: out.files }, {
+    bytes: before.bytes, outcome: 'scope-amended-after-launch', files: ['src/b'],
+  });
+  assert.deepEqual(after, before);
+  assert.match(out.reason, /amend-plan\/amend-tasks/);
+  const retry = fx.mp(...args);
+  assert.equal(retry.status, 0, retry.stderr);
+  const amended = readState(fx.statePath);
+  assert.deepEqual(amended.active_run.scope, ['src/a', 'src/']);
+  assert.deepEqual(amended.tasks[0].files, ['src/']);
+  const recorded = cliRecord(fx, ...reviewArgs);
+  assert.equal(recorded.outcome, 'recorded');
+  assert.deepEqual(recorded.reverted, ['rogue']);
+  assert.equal(git(fx.WT, 'show', 'HEAD:src/b'), 'audited but not yet authorized');
+});
+
+for (const mode of ['previous launch', 'other wave without a cursor']) test(`an interrupted amendment from ${mode} does not preserve unrelated edits`, () => {
+  const fx = fixture();
+  interruptAmendment(fx, 'amend-tasks', '--plan-index=' + fx.index);
+  const launch = fx.mp('set-active-run', '--wave=' + (mode === 'previous launch' ? 1 : 2), '--scope=["src/a"]', '--baseline=[]');
+  assert.equal(launch.status, 0, launch.stderr);
+  let res;
+  put(fx.WT, 'src/b', 'not amended in this launch\n');
+  if (mode === 'previous launch') {
+    res = cliRecord(fx);
+  } else {
+    const state = readState(fx.statePath);
+    delete state.active_run.scope_event_cursor;
+    state.tasks[0].wave = 2;
+    writeState(fx.statePath, state);
+    res = record(fx, { result: { wave: 2, tasks: [{ task_id: 1, digest: { task_id: 1, status: 'done' } }] } });
+  }
+  assert.equal(res.outcome, 'recorded');
+  assert.deepEqual(res.reverted, ['src/b']);
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/b'), 'utf8'), 'original\n');
+});
 
 test('amended scope refusal preserves worktree bytes, HEAD, index and state before any write', () => {
   const fx = fixture(); legacyAmend(fx);
@@ -185,6 +284,35 @@ test('scope writers honor a live foreign owner lock and leave state/events/work 
     const before = snapshot(fx); const res = fx.mp(...args, '--session=foreign', '--host=foreign');
     assert.notEqual(res.status, 0); assert.match(res.stderr, /owned/); assert.deepEqual(snapshot(fx), before);
   }
+});
+
+test('committed recovery CLI Phase B binds a real receipt and refuses before audit writes', () => {
+  const fx = fixture();
+  legacyAmend(fx);
+  launchReview(fx);
+  put(fx.WT, 'src/b', 'recovered work\n');
+  git(fx.WT, 'add', 'src/b'); git(fx.WT, 'commit', '-qm', 'recovered');
+  const head = git(fx.WT, 'rev-parse', 'HEAD');
+  const selector = ['--recovery-repo=' + fx.WT, '--recovery-head=' + head];
+  const phaseA = cliRecord(fx, ...selector);
+  assert.equal(phaseA.op, 'run_native_reviews');
+  assert.equal(phaseA.recovery, true);
+  assert.equal(phaseA.pending_reviews.length, 1);
+  const { identity } = phaseA.pending_reviews[0];
+  assert.equal(identity.head, head);
+  const receipt = reviewFile(fx, { identity });
+  const before = snapshot(fx);
+  const refused = cliRecord(fx, ...selector, receipt);
+  assert.equal(refused.outcome, 'recovery-preservation-violation');
+  assert.match(refused.violations.join('\n'), /scope-amended-after-launch.*src\/b/);
+  assert.deepEqual(snapshot(fx), before);
+
+  // Positive control: the very same receipt records once the scope is repaired.
+  const auth = reauth(fx);
+  assert.equal(auth.status, 0, auth.stderr);
+  assert.equal(cliRecord(fx, ...selector, receipt).outcome, 'recorded');
+  assert.ok(events(fx).some(e => e.type === 'task_adversary_review'));
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
 });
 
 test('committed recovery reports amended scope as a violation without writes', () => {

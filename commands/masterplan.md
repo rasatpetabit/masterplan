@@ -171,10 +171,11 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
      here. Failed/blocked tasks stay `pending` with the marker intact; `next` is
      `recover_wave` for ONLY those. `qctl` tasks hand to §6.
    - `outcome:'scope-amended-after-launch'` → **nothing was written, reverted, cleaned or
-     committed**. `files[]` names changed paths outside the frozen launch scope but inside
-     the current active-wave task declarations. Use the audited controller operation
-     `mp reauthorize-scope --state=<path> --wave=<n> --reason="<approved amendment>"`
-     below, then retry recording. Do not reset/clean the work or refresh its baseline.
+     committed**. `files[]` names changed paths outside the frozen launch scope that match
+     the active wave's task declarations or an audited amendment. If the amendment was
+     interrupted before the state write, rerun the approved `mp amend-plan` or `mp amend-tasks`
+     command. If the task declarations are already on disk, use `mp reauthorize-scope` below.
+     Then retry recording. Do not reset/clean the work or refresh its baseline.
      In committed recovery the same condition appears in `violations[]` under
      `outcome:'recovery-preservation-violation'`, still read-only.
    - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
@@ -188,8 +189,10 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
 
 The launch allow-set remains the tamper guard: editing `plan.index.json` or
 `state.tasks[].files` alone never authorizes a larger recording scope. Changed paths
-inside the current wave's declarations but outside `active_run.scope` stop recording
-non-destructively; paths outside **both** scopes retain the existing revert behaviour.
+outside `active_run.scope` stop recording non-destructively if they match the current
+wave's declarations or a matching amendment audit. The audit preserves work even if
+state replacement was interrupted; it does not enlarge the allow-set. Other paths
+retain the existing revert behaviour.
 
 Use `mp amend-plan --state=<path> --summary="…" [--plan-index=<path>]` to record
 an approved plan amendment. During an active wave it synchronizes that wave's existing
