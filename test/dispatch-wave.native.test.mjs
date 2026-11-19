@@ -1884,6 +1884,161 @@ test('cross-attempt: all-done staging excludes the earlier task even with review
   assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'operator unstaged A\n');
 });
 
+async function interruptedRetryFixture({ shared = false } = {}) {
+  const tasks = [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] }));
+  const fx = makeNativeFixture({ review: { adversary: false }, extra: { tasks, concurrency: { owner_lock: 'off' } } });
+  const index = path.join(fx.bundleDir, 'plan.index.json');
+  const writePlan = (bFiles) => write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: [
+    planEntry(1, 1, tasks[0].files), planEntry(2, 1, bFiles),
+  ] }));
+  fx.amendB = (files) => {
+    writePlan(files);
+    execFileSync(process.execPath, [new URL('../bin/masterplan.mjs', import.meta.url).pathname,
+      'amend-tasks', `--state=${fx.statePath}`, `--plan-index=${index}`]);
+  };
+  const slug = readState(fx.statePath).slug;
+  const wt = worktreePathFor(fx.MAIN, slug);
+  git(fx.MAIN, 'worktree', 'add', '-qb', worktreeBranchFor(slug), wt);
+  write(wt, 'baseline.txt', 'staged before the wave\n');
+  git(wt, 'add', '--', 'baseline.txt');
+  writePlan(tasks[1].files);
+  launchNative(fx);
+  fx.dispatch = () => dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3200, policy: dispatchFixture });
+  assert.equal((await fx.dispatch()).outcome, 'native-spawn-plan');
+  write(fx.WT, 'src/1.txt', 'accepted A\n');
+  const result = (id, status) => ({ task_id: id, digest: workerDigest(id, status) });
+  assert.deepEqual(crossAttemptRecord(fx, { wave: 1, tasks: [result(1), result(2, 'blocked')] }).recorded, [1]);
+  if (shared) fx.amendB(['src/']);
+  write(fx.WT, 'unrelated.txt', 'unrelated untracked work\n');
+  fx.launch = readState(fx.statePath).active_run;
+  fx.aCommit = git(fx.WT, 'rev-parse', 'HEAD');
+  const retry = await fx.dispatch();
+  assert.equal(retry.outcome, 'native-spawn-plan');
+  assert.equal(retry.record.status, 'pending');
+  assert.equal(retry.record.attempt, 2);
+  assert.deepEqual(retry.record.payload.map((task) => task.files), [shared ? ['src/'] : ['src/2.txt']]);
+  assert.ok(retry.record.retry_launch.preserved.some((p) => p.file === 'unrelated.txt' && p.fingerprint));
+  assert.ok(retry.record.retry_launch.scope_event_cursor > fx.launch.scope_event_cursor);
+  // Simulate the interruption immediately after durable publication, without launching a child.
+  write(fx.WT, 'src/1.txt', 'operator staged A\n');
+  git(fx.WT, 'add', '--', 'src/1.txt');
+  write(fx.WT, 'src/1.txt', 'operator unstaged A\n');
+  fx.resume = () => continueRun({ statePath: fx.statePath, self: fx.self, now: 3300 });
+  fx.bResult = { wave: 1, tasks: [result(2)] };
+  return fx;
+}
+
+function interruptedRetrySnapshot(fx) {
+  return {
+    aCommitted: git(fx.WT, 'show', 'HEAD:src/1.txt'),
+    aIndex: git(fx.WT, 'show', ':src/1.txt'),
+    aWorking: fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'),
+    heads: [fx.MAIN, fx.WT].map((repo) => git(repo, 'rev-parse', 'HEAD')),
+    status: git(fx.WT, 'status', '--porcelain'),
+    bundle: Object.fromEntries(fs.readdirSync(fx.bundleDir).map((file) =>
+      [file, fs.readFileSync(path.join(fx.bundleDir, file), 'utf8')])),
+  };
+}
+
+test('interrupted native retry: continue refuses dirty A beneath B’s directory without touching work', async () => {
+  const fx = await interruptedRetryFixture({ shared: true });
+  const before = interruptedRetrySnapshot(fx);
+  assert.equal(before.aCommitted, 'accepted A');
+  assert.equal(before.aIndex, 'operator staged A');
+  assert.equal(before.aWorking, 'operator unstaged A\n');
+  const op = fx.resume();
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), before.aWorking,
+    'continue must not checkout A from the index');
+  assert.equal(op.op, 'ask');
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /src\/1\.txt.*ownership cannot be established/);
+  assert.deepEqual(interruptedRetrySnapshot(fx), before);
+});
+
+test('interrupted native retry: review-off continue preserves the launch and commits only B', async () => {
+  const fx = await interruptedRetryFixture();
+  const before = interruptedRetrySnapshot(fx);
+  assert.equal(fx.resume().op, 'dispatch_fabric');
+  const launch = readState(fx.statePath).active_run;
+  const fromDisk = await fx.dispatch();
+  assert.equal(fromDisk.outcome, 'reused');
+  assert.equal(fromDisk.dispatched, false);
+  assert.equal(fromDisk.record.attempt, 2);
+  const afterResume = interruptedRetrySnapshot(fx);
+  write(fx.WT, 'src/2.txt', 'B complete\n');
+  const final = crossAttemptRecord(fx, fx.bResult);
+  assert.equal(final.cleared, true, JSON.stringify({ launch, outcome: final.outcome, reason: final.reason,
+    ask: final.ask, violations: final.violations }));
+  assert.deepEqual(afterResume, before, 'continue must not recapture retry fingerprints or rewrite launch evidence');
+  assert.deepEqual(final.recorded, [2]);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD^'), fx.aCommit);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/2.txt');
+  assert.equal(git(fx.WT, 'show', ':src/1.txt'), before.aIndex);
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), before.aWorking);
+  assert.equal(git(fx.WT, 'show', ':baseline.txt'), 'staged before the wave');
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'unrelated.txt'), 'utf8'), 'unrelated untracked work\n');
+  assert.equal(git(fx.WT, 'status', '--porcelain'), 'A  baseline.txt\nMM src/1.txt\n?? unrelated.txt');
+  for (const field of ['scope', 'baseline', 'scope_event_cursor', 'wsBaseline']) {
+    assert.deepEqual(launch[field], fx.launch[field], `original launch ${field}`);
+  }
+});
+
+test('interrupted native retry: continue refuses missing or inconsistent launch proof before resetting B', async () => {
+  const fx = await interruptedRetryFixture();
+  write(fx.WT, 'src/2.txt', 'B work to preserve on refusal\n');
+  const state = readState(fx.statePath);
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  const expectRefusal = (reason) => {
+    const before = interruptedRetrySnapshot(fx);
+    const op = fx.resume();
+    assert.equal(op.ask, 'dispatch-error');
+    assert.match(op.error, reason);
+    assert.deepEqual(interruptedRetrySnapshot(fx), before);
+    assert.equal(fs.readFileSync(path.join(fx.WT, 'src/2.txt'), 'utf8'), 'B work to preserve on refusal\n');
+  };
+  const withoutProof = { ...record };
+  delete withoutProof.retry_launch;
+  writeWaveDispatchRecord(fx.bundleDir, 1, withoutProof);
+  expectRefusal(/missing published retry launch proof/);
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  writeState(fx.statePath, { ...state, active_run: { ...state.active_run, scope_event_cursor: undefined } });
+  expectRefusal(/missing or inconsistent original retry launch scope, baseline, or cursor/);
+  writeState(fx.statePath, { ...state, active_run: { ...state.active_run, baseline: [] } });
+  expectRefusal(/missing or inconsistent published retry launch proof/);
+  writeState(fx.statePath, { ...state, active_run: { ...state.active_run, scope: ['src/2.txt'] } });
+  expectRefusal(/current scope does not match the published retry launch/);
+});
+
+test('interrupted native retry: continue preserves an audited extension to the published scope', async () => {
+  const fx = await interruptedRetryFixture();
+  fx.amendB(['src/2.txt', 'src/new.txt']);
+  const before = interruptedRetrySnapshot(fx);
+  assert.equal(fx.resume().op, 'dispatch_fabric');
+  assert.deepEqual(readState(fx.statePath).active_run.scope, [...fx.launch.scope, 'src/new.txt']);
+  assert.deepEqual(interruptedRetrySnapshot(fx), before);
+});
+
+test('interrupted first native attempt: continue still resets disposable work and dispatch reuses the pending record', async () => {
+  const fx = makeNativeFixture({ review: { adversary: false }, extra: { concurrency: { owner_lock: 'off' } } });
+  launchNative(fx);
+  const dispatch = () => dispatchWaveViaFabric({ statePath: fx.statePath, now: 3200, policy: dispatchFixture });
+  const first = await dispatch();
+  assert.equal(first.outcome, 'native-spawn-plan');
+  assert.equal(first.record.status, 'pending');
+  assert.equal(first.record.attempt, 1);
+  assert.equal(first.record.retry_launch, undefined);
+  write(fx.WT, 'src/a.txt', 'disposable first-attempt residue\n');
+  write(fx.WT, 'unrelated.txt', 'unrelated work\n');
+  const resume = continueRun({ statePath: fx.statePath, now: 3300 });
+  assert.equal(resume.op, 'dispatch_fabric');
+  assert.deepEqual(resume.baseline, ['unrelated.txt']);
+  assert.equal(fs.existsSync(path.join(fx.WT, 'src/a.txt')), false);
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'unrelated.txt'), 'utf8'), 'unrelated work\n');
+  const reused = await dispatch();
+  assert.equal(reused.outcome, 'reused');
+  assert.deepEqual(reused.record, first.record);
+});
+
 test('review rework: committed recovery stays pinned and fails closed on a changed MAIN watch baseline', async () => {
   const fx = makeNativeFixture({ slug: 'review-rework-recovery', extra: { concurrency: { owner_lock: 'off' } } });
   launchNative(fx);
