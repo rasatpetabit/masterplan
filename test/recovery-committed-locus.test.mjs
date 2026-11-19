@@ -203,7 +203,7 @@ test('committed-locus: baseline-before-commit recovery records through recordWav
     result: recoveryResult(fx), recoverySelector: { repo: fx.WT, head: fx.HEAD } });
   const reviewed = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
     result: recoveryResult(fx), recoverySelector: { repo: fx.WT, head: fx.HEAD },
-    providedReviews: { 1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity } } });
+    providedReviews: { 1: { final_verdict: 'approve', findings: [], blocking_findings: [], harness: {}, identity: pending.pending_reviews[0].identity } } });
   const res = callRecovery(fx, fx.HEAD, reviewed);
   assert.equal(res.outcome, 'recorded', JSON.stringify(res));
   assert.deepEqual(res.recorded, [1]);

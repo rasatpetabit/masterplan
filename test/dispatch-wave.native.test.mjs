@@ -767,7 +767,7 @@ test('phase B: provided native reviews ingest through the centralized projection
     self: fx.self, now: 3000, worktree: fx.WT,
   });
   assert.equal(recorded.blocking_reviews[0].verdict, 'reject');
-  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
 });
 
 test('phase B: a missing provided review fails closed as an error review', async () => {
@@ -1249,7 +1249,7 @@ for (const partial of [false, true]) {
   });
 }
 
-test('X22 R3 F3 newly submitted rejection remains blocking on continue', async () => {
+test('X22 R3 F3 newly submitted rejection leaves work pending on continue', async () => {
   const fx = await x22Fixture('x22-r3-new-reject-continue');
   const restart = disposeReviewEpisode(fx.args);
   const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
@@ -1258,9 +1258,11 @@ test('X22 R3 F3 newly submitted rejection remains blocking on continue', async (
     worktree: fx.WT, result: reviewed });
   assert.equal(res.blocking_reviews[0]?.verdict, 'reject');
   assert.equal(res.cleared, false);
+  assert.deepEqual(res.recorded, []);
+  assert.deepEqual(res.next.tasks.map((t) => t.id), [1]);
   const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 2500, routing: dispatchFixture });
-  assert.equal(next.ask, 'blocking-reviews');
-  assert.equal(next.blocking_reviews[0]?.verdict, 'reject');
+  assert.equal(next.op, 'dispatch_fabric');
+  assert.ok(fs.existsSync(path.join(fx.WT, 'src/a.txt')));
 });
 
 test('X22 R3 F1 retired done task without marker cannot hand off to finish', async () => {
@@ -1555,8 +1557,10 @@ for (const carrier of ['stripped', 'input']) {
     assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
     assert.ok(x22Events(fx).startsWith(beforeEvents), 'preserve earlier events');
     assert.match(x22Events(fx), /"verdict":"reject"/);
-    const reconciled = authorizeRecording({ statePath: fx.statePath, state: readState(fx.statePath), result: null });
-    assert.equal(reconciled.reconciledReviews.get(1)?.verdict, 'reject', 'reconciliation selects the same rejecting event');
+    assert.deepEqual(out.recorded, []);
+    assert.equal(readState(fx.statePath).tasks[0].status, 'pending', 'canonical rejection defeats the submitted approval');
+    assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2600, result: null }),
+      /committed recovery still needs review/);
   });
 }
 
@@ -1759,18 +1763,126 @@ for (const restart of [false, true]) {
 }
 
 // Cross-attempt regression: use the CLI recorder so the real attempt finalizer runs.
-function crossAttemptRecord(fx, result, reviews = null) {
-  const resultFile = path.join(fx.tmp, 'result.json');
-  write(fx.tmp, 'result.json', JSON.stringify(result));
-  const args = ['record-result', `--state=${fx.statePath}`, `--result-file=${resultFile}`, '--now=3000'];
+function crossAttemptRecord(fx, result, reviews = null, extraArgs = []) {
+  const scratch = path.join(fx.tmp, '.recorder-inputs');
+  const resultFile = path.join(scratch, 'result.json');
+  write(scratch, 'result.json', JSON.stringify(result));
+  const args = ['record-result', `--state=${fx.statePath}`, `--result-file=${resultFile}`, '--now=3000', ...extraArgs];
   if (reviews) {
-    write(fx.tmp, 'reviews.json', JSON.stringify(reviews));
-    args.push(`--reviews-file=${path.join(fx.tmp, 'reviews.json')}`);
+    write(scratch, 'reviews.json', JSON.stringify(reviews));
+    args.push(`--reviews-file=${path.join(scratch, 'reviews.json')}`);
   }
   return JSON.parse(execFileSync(process.execPath,
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
+for (const mixed of [false, true]) {
+  test(`review rework: ${mixed ? 'mixed wave' : 'all blocked'} preserves work through continue and re-review`, async () => {
+    const tasks = [
+      ...(mixed ? [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }] : []),
+      { id: 2, status: 'pending', wave: 1, files: ['src/seed.txt', 'src/b.txt'] },
+    ];
+    const fx = makeNativeFixture({ slug: 'review-rework', extra: { tasks, concurrency: { owner_lock: 'off' } } });
+    write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+    launchNative(fx);
+    await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+    const base = git(fx.WT, 'rev-parse', 'HEAD');
+    if (mixed) write(fx.WT, 'src/a.txt', 'approved A\n');
+    write(fx.WT, 'src/seed.txt', 'B tracked work\n');
+    write(fx.WT, 'src/b.txt', 'B untracked work\n');
+    git(fx.WT, 'add', '--', 'src/seed.txt');
+    const result = { wave: 1, tasks: tasks.map(({ id }) => ({ task_id: id, digest: workerDigest(id) })) };
+    const phaseA = crossAttemptRecord(fx, result);
+    assert.equal(phaseA.op, 'run_native_reviews');
+    assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), tasks.map((t) => t.id));
+    const first = crossAttemptRecord(fx, result, {
+      ...(mixed ? { 1: x22Approval } : {}), 2: { ...rejectRecord, final_verdict: 'rework' },
+    });
+    assert.deepEqual(first.recorded, mixed ? [1] : []);
+    assert.deepEqual(first.blocking_reviews.map(({ id, verdict }) => [id, verdict]), [[2, 'rework']]);
+    assert.deepEqual(first.next.tasks.map((t) => t.id), [2]);
+    assert.deepEqual(readState(fx.statePath).tasks.map((t) => t.status), mixed ? ['done', 'pending'] : ['pending']);
+    const afterFirst = git(fx.WT, 'rev-parse', 'HEAD');
+    assert.equal(git(fx.WT, 'diff', '--name-only', base, 'HEAD'), mixed ? 'src/a.txt' : '');
+    assert.deepEqual(first.commits.code_by_repo, mixed ? { [fx.WT]: afterFirst } : {});
+    const priorEvents = x22Events(fx);
+    const readB = (p) => fs.readFileSync(path.join(fx.WT, p), 'utf8');
+    write(fx.WT, 'user.txt', 'unrelated work between attempts\n');
+    const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 3100, policy: dispatchFixture });
+    assert.equal(next.op, 'dispatch_fabric');
+    assert.equal(readB('src/seed.txt'), 'B tracked work\n');
+    assert.equal(readB('src/b.txt'), 'B untracked work\n');
+    assert.equal(git(fx.WT, 'show', ':src/seed.txt'), 'B tracked work', 'preserve the index as well');
+    const second = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3200, policy: dispatchFixture });
+    assert.equal(second.outcome, 'native-spawn-plan');
+    assert.equal(second.record.attempt, 2);
+    assert.deepEqual(second.record.tasks.map((t) => t.task_id), [2]);
+    assert.deepEqual(second.record.history[0].record_outcome.recorded, mixed ? [1] : []);
+    write(fx.WT, 'src/seed.txt', 'B fixes the review finding\n');
+    const retry = { wave: 1, tasks: [result.tasks.at(-1)] };
+    const fresh = crossAttemptRecord(fx, retry);
+    assert.equal(fresh.op, 'run_native_reviews');
+    assert.deepEqual(fresh.pending_reviews.map((r) => r.task_id), [2]);
+    assert.notEqual(fresh.pending_reviews[0].diff_sha, phaseA.pending_reviews.at(-1).diff_sha);
+    const final = crossAttemptRecord(fx, retry, { 2: x22Approval });
+    assert.deepEqual(final.recorded, [2]);
+    assert.deepEqual(final.blocking_reviews, []);
+    assert.equal(final.cleared, true);
+    assert.equal(final.next.action, 'complete');
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD^'), afterFirst);
+    assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/b.txt\nsrc/seed.txt');
+    assert.equal(git(fx.WT, 'status', '--porcelain'), '?? user.txt');
+    assert.equal(readB('user.txt'), 'unrelated work between attempts\n');
+    if (mixed) assert.equal(git(fx.WT, 'log', '-1', '--format=%H', '--', 'src/a.txt'), afterFirst);
+    assert.ok(x22Events(fx).startsWith(priorEvents), 'retain prior receipts verbatim');
+  });
+}
+
+test('review rework: committed recovery stays pinned and fails closed on a changed MAIN watch baseline', async () => {
+  const fx = makeNativeFixture({ slug: 'review-rework-recovery', extra: { concurrency: { owner_lock: 'off' } } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  write(fx.WT, 'src/a.txt', 'recovered work\n');
+  git(fx.WT, 'add', '--', 'src/a.txt');
+  git(fx.WT, 'commit', '-qm', 'recovered work');
+  const head = git(fx.WT, 'rev-parse', 'HEAD');
+  const selectors = (oid) => [`--recovery-repo=${fx.WT}`, `--recovery-head=${oid}`];
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  const phaseA = crossAttemptRecord(fx, result, null, selectors(head));
+  assert.equal(phaseA.recovery, true);
+  const { identity } = phaseA.pending_reviews[0];
+  const first = crossAttemptRecord(fx, result, { 1: { ...rejectRecord, identity } }, selectors(head));
+  assert.equal(first.outcome, 'recorded', JSON.stringify(first));
+  assert.deepEqual(first.recorded, []);
+  assert.deepEqual(first.commits.code_by_repo, {});
+  assert.equal(first.commits.code, head, 'the recovered HEAD is reported for audit only');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+  const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 3100, policy: dispatchFixture });
+  assert.equal(next.ask, 'blocking-reviews');
+  assert.equal((await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3200, policy: dispatchFixture })).dispatched, false);
+  assert.throws(() => crossAttemptRecord(fx, result), /committed recovery/i);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
+  const priorEvents = x22Events(fx);
+  write(fx.WT, 'src/a.txt', 'revised recovered work\n');
+  git(fx.WT, 'commit', '-qam', 'address review');
+  const revisedHead = git(fx.WT, 'rev-parse', 'HEAD');
+  const revised = crossAttemptRecord(fx, result, null, selectors(revisedHead));
+  assert.equal(revised.pending_reviews[0].base, phaseA.pending_reviews[0].base);
+  assert.notEqual(revised.pending_reviews[0].diff_sha, phaseA.pending_reviews[0].diff_sha);
+  assert.throws(() => crossAttemptRecord(fx, result, { 1: { ...x22Approval, identity } }, selectors(revisedHead)), /receipt binding failed/);
+  const final = crossAttemptRecord(fx, result, { 1: { ...x22Approval, identity: revised.pending_reviews[0].identity } }, selectors(revisedHead));
+  // The first recording committed its state in MAIN. Do not weaken the
+  // committed-recovery watch guard to make a subsequent attempt succeed.
+  assert.equal(final.outcome, 'recovery-preservation-violation');
+  assert.match(final.violations.join('\n'), /watch-list violation .*\(HEAD\): watched repo HEAD moved/);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), revisedHead);
+  assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+  assert.equal(x22Events(fx), priorEvents, 'refused re-review appends no approval');
+});
+
 async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false, noEditA = false, workerCommittedA = false, committedScopeOnly = false, beforeFirstRecord = null } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
@@ -2332,6 +2444,20 @@ for (const workerCommittedA of [false, true]) {
     assert.equal(out.commits.code_by_repo[fx.aRepo], fx.acceptedA);
   });
 }
+
+test('review rework: an earlier approval does not commit a blocked retry’s shared edits', async () => {
+  const fx = await crossAttemptFixture({ shared: true });
+  write(fx.WT, 'src/1.txt', 'B update to a previously approved path\n');
+  assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+  const out = crossAttemptRecord(fx, fx.secondResult, { 2: rejectRecord });
+  assert.deepEqual(out.recorded, []);
+  assert.deepEqual(out.next.tasks.map((t) => t.id), [2]);
+  assert.equal(out.commits.code, null);
+  assert.deepEqual(out.commits.code_by_repo, {});
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(git(fx.WT, 'show', 'HEAD:src/1.txt'), 'A complete');
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'B update to a previously approved path\n');
+});
 
 test('cross-attempt: blocked B cannot cover shared file without a review', async () => {
   const fx = await crossAttemptFixture({ shared: true });

@@ -4227,10 +4227,10 @@ function main() {
           // 'pending' BEFORE spawn; a successful record-result closes that window so
           // the next attempt (or crash reconcile) sees 'recorded', not an
           // in-flight dispatch. Guard-D already serializes this writer.
-          // A5 (2026-08-30): only finalize to 'recorded' when the transaction actually
-          // marked task(s) done — recRes.recorded is the array of ids that landed. A
-          // lost-to-other / stale-epoch / recorded-nothing outcome must NOT stamp
-          // 'recorded' (it would let the next attempt skip re-driving the record).
+          // 'recorded' observes the attempt, not task completion. A persisted
+          // blocking review also ends the attempt, even if no task was accepted.
+          // Lost ownership, a stale epoch and failure-only results retain the A5
+          // pending window; none durably accepted a task or recorded review rework.
           try {
             const waveNo = Number.isInteger(reviewedResult?.wave)
               ? reviewedResult.wave
@@ -4238,8 +4238,7 @@ function main() {
             const bundleDir = path.dirname(path.resolve(statePath));
             const existing = Number.isInteger(waveNo) ? readWaveDispatchRecord(bundleDir, waveNo) : null;
             if (existing && existing.status === 'pending') {
-              const recordedAny = Array.isArray(recRes.recorded) && recRes.recorded.length > 0;
-              if (recordedAny) {
+              if (recRes.outcome === 'recorded' && (recRes.recorded.length || recRes.review_rework?.length)) {
                 writeWaveDispatchRecord(bundleDir, waveNo, {
                   ...existing,
                   status: 'recorded',
@@ -4247,6 +4246,7 @@ function main() {
                   record_outcome: {
                     recorded: recRes.recorded,
                     failed: recRes.failed,
+                    ...(recRes.blocking_reviews.length ? { blocking_reviews: recRes.blocking_reviews } : {}),
                     cleared: recRes.cleared,
                     commits: recRes.commits,
                   },

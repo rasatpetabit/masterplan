@@ -213,7 +213,7 @@ test('recovery-heartbeat: clean committed recovery with the owner lock ON record
     result: recoveryResult(), recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 2000 });
   const reviewed = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
     result: recoveryResult(), recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 3000,
-    providedReviews: { 1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity } } });
+    providedReviews: { 1: { final_verdict: 'approve', findings: [], blocking_findings: [], harness: {}, identity: pending.pending_reviews[0].identity } } });
   const res = callRecovery(fx, { result: reviewed });
   assert.equal(res.outcome, 'recorded', JSON.stringify(res));
   assert.deepEqual(res.recorded, [1]);

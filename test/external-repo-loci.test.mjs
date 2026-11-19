@@ -362,7 +362,7 @@ test('blocker R2: external committed recovery passes Phase A and records Phase B
   assert.equal(pending.review_outcome, 'recovery-review-pending');
   assert.equal(pending.pending_reviews[0].identity.head, head);
   const reviewed = await reviewNativeResult({ ...args, providedReviews: {
-    1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity },
+    1: { final_verdict: 'approve', findings: [], blocking_findings: [], harness: {}, identity: pending.pending_reviews[0].identity },
   } });
   const recorded = recordWaveResult({ ...args, result: reviewed, recovery: true,
     deferredEvents: reviewed.deferred_review_events });

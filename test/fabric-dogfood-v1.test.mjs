@@ -164,6 +164,6 @@ test('V1 dogfood: blocking adversary verdict surfaces via blocking_reviews[]', a
   assert.match(JSON.stringify(recorded.blocking_reviews[0].findings), /data race/);
   assert.equal(reviewed.tasks[0].digest.review.verdict, 'reject');
   assert.ok(Array.isArray(reviewed.tasks[0].digest.review.findings));
-  // Task still records done; orchestrator acts on blocking_reviews[].
-  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  assert.deepEqual(recorded.next.tasks.map((t) => t.id), [1]);
 });

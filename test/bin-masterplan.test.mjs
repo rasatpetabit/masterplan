@@ -2822,7 +2822,10 @@ test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker
 
 
 // ---- native wave review parity (record-result awaits reviewNativeResult) ----
-test('record-result awaits native review before the state transaction (CLI ordering)', async () => {
+for (const [verdict, incomplete, expected] of [
+  ['rework', false, 'rework'], ['reject', false, 'reject'],
+  ['error', false, 'error'], ['approve', true, 'error'],
+]) test(`record-result awaits native review before the state transaction (${incomplete ? 'incomplete approval' : verdict})`, () => {
   const repo = tmpDir('mp-bin-native-review-');
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   git('init', '--initial-branch=main');
@@ -2923,13 +2926,13 @@ test('record-result awaits native review before the state transaction (CLI order
   const reviewsPath = path.join(bundleDir, 'native-reviews.json');
   fs.writeFileSync(reviewsPath, JSON.stringify({
     1: {
-      final_verdict: 'reject',
+      final_verdict: verdict,
       findings: [{ severity: 'high', summary: 'breaks the contract' }],
       blocking_findings: [{ summary: 'breaks the contract', proof: 'diff shows it' }],
       summary: 'blocking contract break',
       harness: {
         degraded: false, timed_out: false, stalled: false,
-        deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,
+        deadline_exceeded: false, regions_unreviewed: incomplete ? 1 : 0, extraction_degraded: false,
       },
     },
   }));
@@ -2944,9 +2947,17 @@ test('record-result awaits native review before the state transaction (CLI order
   assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);
   const out = JSON.parse(r.stdout);
   assert.equal(out.outcome, 'recorded');
-  assert.equal(out.blocking_reviews[0].verdict, 'reject',
+  assert.equal(out.blocking_reviews[0].verdict, expected,
     'CLI must await native review before recordWaveResult so blocking_reviews is populated');
-  assert.equal(read(statePath).tasks[0].status, 'done');
+  const decided = run(['decide', `--state=${statePath}`]);
+  assert.equal(decided.status, 0, decided.stderr);
+  const next = JSON.parse(decided.stdout);
+  const state = read(statePath);
+  assert.ok(state.active_run, 'retain the active wave');
+  assert.deepEqual({ status: state.tasks[0].status, action: next.action, tasks: next.tasks?.map((t) => t.id) },
+    { status: 'pending', action: 'recover_wave', tasks: [1] });
+  assert.deepEqual(next.resetPaths, [], 'rework is not a crash reset target');
+  assert.deepEqual(out.recorded, [], 'the worker digest alone is not completion');
 });
 
 test('native-path record-result ignores a smuggled deferred_review_events field (recovery path only)', async () => {

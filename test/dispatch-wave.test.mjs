@@ -651,7 +651,7 @@ test('failed review writes a non-satisfying skipped event and blocks with verdic
   assert.equal(reviewed.tasks[0].review.verdict, 'error');
   assert.equal(recorded.blocking_reviews.length, 1);
   assert.equal(recorded.blocking_reviews[0].verdict, 'error');
-  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
   const evs = readEvents(fx.bundleDir);
   assert.equal(evs.filter((e) => e.type === 'task_adversary_review_skipped').length, 1);
   assert.equal(evs.filter((e) => e.type === 'task_adversary_review').length, 0);

@@ -105,7 +105,7 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
     result: {
       wave: 1,
       baseline: [],
-      tasks: [digest(1, 'done'), digest(2, 'done', { review: { verdict: 'blocking', findings: ['F1'] } })],
+      tasks: [digest(1, 'done'), digest(2, 'done', { review: { verdict: 'clean' } })],
     },
   });
 
@@ -114,10 +114,7 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.deepEqual(res.failed, []);
   assert.equal(res.scope.ok, true);
   assert.deepEqual(res.reverted, []);
-  // blocking review on a DONE task still surfaces (review gate is independent of status).
-  // Legacy 'blocking' normalizes to 'reject'; findings land once in blocking_findings
-  // (not duplicated into findings).
-  assert.deepEqual(res.blocking_reviews, [{ id: 2, verdict: 'reject', findings: ['F1'] }]);
+  assert.deepEqual(res.blocking_reviews, [], 'no-review and legacy clean both remain accepted');
   assert.equal(res.cleared, true);
   assert.equal(res.next.action, 'complete');
 
@@ -213,8 +210,10 @@ test('record-result preserves legacy blocking review on redrive', () => {
       task_id: 1, review, digest: { ...digest(1, 'done').digest, review },
     }] },
   });
-  assert.ok(Array.isArray(res.blocking_reviews[0].findings));
-  assert.match(JSON.stringify(res.blocking_reviews[0].findings), /legacy blocker/);
+  assert.deepEqual(res.blocking_reviews, [{ id: 1, verdict: 'reject',
+    findings: [{ summary: 'legacy blocker', severity: 'blocking' }] }]);
+  assert.deepEqual(res.recorded, []);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
 });
 
 test('REGRESSION: the controller\'s own Guard-D heartbeat is not a watch breach', () => {

@@ -250,6 +250,11 @@ Masterplan does **not** own the review engine. When review is on, for every `don
 4. Projects the harness review record into a compact canonical shape
    (`approve | rework | reject | error` + findings + harness metadata) and persists it before
    `recordWaveResult`.
+5. Records a successful digest as `done` only when the authoritative review does not
+   block. A blocking review settles the dispatch attempt, not the task. The active
+   marker retains the task for rework; `continue` redispatches it without resetting its
+   files or treating its retained edits as pre-existing dirt. The code commit excludes
+   those paths, while disjoint approved siblings keep their commits and review evidence.
 
 All chunking, retries, reconciliation, findings extraction, and verdict semantics live in the
 harness-native review engine (`/srv/workflows/policy/dispatch.md`; the routing policy
@@ -266,7 +271,11 @@ clean tree, nonempty delta), captures the deterministic two-endpoint base→HEAD
 and binds every Phase B receipt to the full recomputed identity. Review events are DEFERRED until
 `recordWaveResult` appends them after the owner/epoch/scope guards pass; legacy SHA-only events and
 caller-supplied `item.review` never satisfy recovery coverage. Recording runs the
-scope/watch/baseline checks read-only and NEVER resets/cleans/reverts/commits.
+scope/watch/baseline checks read-only and NEVER resets/cleans/reverts/commits the edit locus.
+A blocking review leaves the task pending and keeps the frozen review base: ordinary
+redispatch would rebase the review onto unapproved code. The explicit recovery path still
+requires a bound receipt and the original preservation checks; in particular, a MAIN HEAD
+change (including a recorder state commit) can prevent a follow-up from passing the watch check.
 
 **Native path.** The wave's review requirement rides on the descriptors (`review: {adversary: true}`)
 and `review_context` is frozen into the wave-dispatch record before
