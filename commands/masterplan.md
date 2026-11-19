@@ -170,9 +170,12 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
      `reject`, `error`, and incomplete harness coverage from the native review seam all land
      here. Failed/blocked tasks stay `pending` with the marker intact; `next` is
      `recover_wave` for only the unfinished tasks. After a blocking review, keep the
-     task's scoped edits for rework; do not check them out or clean them. An explicit
-     committed-recovery block keeps its frozen base and requires that recovery path
-     again, not ordinary redispatch. `qctl` tasks hand to §6.
+     task's scoped edits for rework; do not check them out or clean them. An ordinary native
+     retry commits only the retried tasks’ authorized files, not completed siblings’ work.
+     An explicit committed-recovery block keeps its frozen base and requires that recovery
+     path, not ordinary redispatch. Inspect the original preservation checks before retrying:
+     even the recorder's own state commit can move watched MAIN HEAD and cause refusal.
+     Do not retry blindly or refresh the baseline. `qctl` tasks hand to §6.
    - `outcome:'scope-amended-after-launch'` → **nothing was written, reverted, cleaned or
      committed**. `files[]` names changed paths outside the frozen launch scope that match
      the active wave's task declarations or an audited amendment. If the amendment was

@@ -33,6 +33,7 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult, authorizeRecording, assertEarlierTaskFilesUnchanged } from '../lib/wave-commit.mjs';
 import { captureFullWorkingDiff, rebuildFullWorkingDiff } from '../lib/working-diff.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
+import { worktreeBranchFor, worktreePathFor } from '../lib/worktree.mjs';
 import { resolveTaskReviewAttempt, taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
@@ -1776,15 +1777,22 @@ function crossAttemptRecord(fx, result, reviews = null, extraArgs = []) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
-for (const mixed of [false, true]) {
-  test(`review rework: ${mixed ? 'mixed wave' : 'all blocked'} preserves work through continue and re-review`, async () => {
+for (const [mixed, direct] of [[false, false], [true, false], [true, true]]) {
+  const route = direct ? 'direct redispatch' : 'continue';
+  test(`review rework: ${mixed ? 'mixed wave' : 'all blocked'} preserves work through ${route} and re-review`, async () => {
     const tasks = [
       ...(mixed ? [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }] : []),
       { id: 2, status: 'pending', wave: 1, files: ['src/seed.txt', 'src/b.txt'] },
     ];
-    const fx = makeNativeFixture({ slug: 'review-rework', extra: { tasks, concurrency: { owner_lock: 'off' } } });
+    const slug = 'review-rework';
+    const fx = makeNativeFixture({ slug, extra: { tasks, concurrency: { owner_lock: 'off' } } });
     write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+    const wt = worktreePathFor(fx.MAIN, slug);
+    git(fx.MAIN, 'worktree', 'add', '-qb', worktreeBranchFor(slug), wt);
+    write(wt, 'baseline.txt', 'staged before wave 1\n');
+    git(wt, 'add', '--', 'baseline.txt');
     launchNative(fx);
+    assert.deepEqual(readState(fx.statePath).active_run.baseline, ['baseline.txt']);
     await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
     const base = git(fx.WT, 'rev-parse', 'HEAD');
     if (mixed) write(fx.WT, 'src/a.txt', 'approved A\n');
@@ -1808,8 +1816,15 @@ for (const mixed of [false, true]) {
     const priorEvents = x22Events(fx);
     const readB = (p) => fs.readFileSync(path.join(fx.WT, p), 'utf8');
     write(fx.WT, 'user.txt', 'unrelated work between attempts\n');
-    const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 3100, policy: dispatchFixture });
-    assert.equal(next.op, 'dispatch_fabric');
+    if (mixed) {
+      write(fx.WT, 'src/a.txt', 'operator staged A\n');
+      git(fx.WT, 'add', '--', 'src/a.txt');
+      write(fx.WT, 'src/a.txt', 'operator unstaged A\n');
+    }
+    if (!direct) {
+      const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 3100, policy: dispatchFixture });
+      assert.equal(next.op, 'dispatch_fabric');
+    }
     assert.equal(readB('src/seed.txt'), 'B tracked work\n');
     assert.equal(readB('src/b.txt'), 'B untracked work\n');
     assert.equal(git(fx.WT, 'show', ':src/seed.txt'), 'B tracked work', 'preserve the index as well');
@@ -1831,12 +1846,43 @@ for (const mixed of [false, true]) {
     assert.equal(final.next.action, 'complete');
     assert.equal(git(fx.WT, 'rev-parse', 'HEAD^'), afterFirst);
     assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/b.txt\nsrc/seed.txt');
-    assert.equal(git(fx.WT, 'status', '--porcelain'), '?? user.txt');
+    assert.equal(git(fx.WT, 'status', '--porcelain'),
+      `A  baseline.txt\n${mixed ? 'MM src/a.txt\n' : ''}?? user.txt`);
+    assert.equal(git(fx.WT, 'show', ':baseline.txt'), 'staged before wave 1');
     assert.equal(readB('user.txt'), 'unrelated work between attempts\n');
-    if (mixed) assert.equal(git(fx.WT, 'log', '-1', '--format=%H', '--', 'src/a.txt'), afterFirst);
+    if (mixed) {
+      assert.equal(git(fx.WT, 'show', 'HEAD:src/a.txt'), 'approved A');
+      assert.equal(git(fx.WT, 'show', ':src/a.txt'), 'operator staged A');
+      assert.equal(readB('src/a.txt'), 'operator unstaged A\n');
+    }
     assert.ok(x22Events(fx).startsWith(priorEvents), 'retain prior receipts verbatim');
   });
 }
+
+test('cross-attempt: all-done staging excludes the earlier task even with review off', async () => {
+  const tasks = [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] }));
+  const fx = makeNativeFixture({ review: { adversary: false }, extra: { tasks, concurrency: { owner_lock: 'off' } } });
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+  const dispatch = () => dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  launchNative(fx);
+  assert.equal((await dispatch()).outcome, 'native-spawn-plan');
+  write(fx.WT, 'src/1.txt', 'A complete\n');
+  const result = (digest) => ({ task_id: digest.task_id, digest });
+  const first = crossAttemptRecord(fx, { wave: 1, tasks: [result(workerDigest(1)), result(workerDigest(2, 'blocked'))] });
+  assert.deepEqual(first.recorded, [1]);
+  assert.equal((await dispatch()).record.attempt, 2);
+  // This edit is newer than all baseline captures, so baseline subtraction
+  // alone cannot protect it. Only the retry's task set limits staging here.
+  write(fx.WT, 'src/1.txt', 'operator staged A\n');
+  git(fx.WT, 'add', '--', 'src/1.txt');
+  write(fx.WT, 'src/1.txt', 'operator unstaged A\n');
+  write(fx.WT, 'src/2.txt', 'B complete\n');
+  const final = crossAttemptRecord(fx, { wave: 1, tasks: [result(workerDigest(2))] });
+  assert.equal(final.cleared, true);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/2.txt');
+  assert.equal(git(fx.WT, 'show', ':src/1.txt'), 'operator staged A');
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'operator unstaged A\n');
+});
 
 test('review rework: committed recovery stays pinned and fails closed on a changed MAIN watch baseline', async () => {
   const fx = makeNativeFixture({ slug: 'review-rework-recovery', extra: { concurrency: { owner_lock: 'off' } } });
@@ -1861,6 +1907,7 @@ test('review rework: committed recovery stays pinned and fails closed on a chang
   assert.equal(git(fx.WT, 'status', '--porcelain'), '');
   const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 3100, policy: dispatchFixture });
   assert.equal(next.ask, 'blocking-reviews');
+  assert.match(next.reason, /own MAIN state commit.*cause refusal/);
   assert.equal((await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3200, policy: dispatchFixture })).dispatched, false);
   assert.throws(() => crossAttemptRecord(fx, result), /committed recovery/i);
   assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
@@ -1883,7 +1930,7 @@ test('review rework: committed recovery stays pinned and fails closed on a chang
   assert.equal(x22Events(fx), priorEvents, 'refused re-review appends no approval');
 });
 
-async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false, noEditA = false, workerCommittedA = false, committedScopeOnly = false, beforeFirstRecord = null } = {}) {
+async function crossAttemptFixture({ external = false, shared = false, extraScope = false, committedDrift = false, mixedArtifact = false, reviewPartial = false, wrongParent = false, noEditA = false, workerCommittedA = false, committedScopeOnly = false, beforeFirstRecord = null, beforeRetry = null } = {}) {
   const fx = makeNativeFixture({ slug: 'cross-attempt', extra: {
     concurrency: { owner_lock: 'off' },
     tasks: [1, 2].map((id) => ({ id, status: 'pending', wave: 1, files: [`src/${id}.txt`] })),
@@ -1955,7 +2002,9 @@ async function crossAttemptFixture({ external = false, shared = false, extraScop
     writeState(fx.statePath, amended);
     write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: amended.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
   }
+  if ((await beforeRetry?.(fx)) === false) return fx;
   const second = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3000, policy: dispatchFixture });
+  assert.equal(second.outcome, 'native-spawn-plan');
   assert.equal(second.record.attempt, 2);
   assert.deepEqual(second.record.tasks.map((t) => t.task_id), [2]);
   assert.deepEqual(Object.keys(second.record.review_context.episodes), ['2']);
@@ -2288,6 +2337,62 @@ test('cross-attempt: B review covers shared declared file and commits it', async
   assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/1.txt\nsrc/2.txt');
   assert.equal(git(fx.WT, 'show', 'HEAD:src/1.txt'), 'A and B shared update');
   assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+});
+
+test('cross-attempt: an audited retry amendment can authorize new and shared files', async () => {
+  const fx = await crossAttemptFixture();
+  const state = readState(fx.statePath);
+  const index = path.join(fx.bundleDir, 'plan.index.json');
+  const added = ['src/1.txt', 'src/new.txt'];
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: state.tasks.map((t) =>
+    planEntry(t.id, 1, t.id === 2 ? [...t.files, ...added] : t.files)) }));
+  execFileSync(process.execPath, [new URL('../bin/masterplan.mjs', import.meta.url).pathname,
+    'amend-tasks', `--state=${fx.statePath}`, `--plan-index=${index}`]);
+  for (const file of added) write(fx.WT, file, 'B amended work\n');
+  assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+  const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+  assert.deepEqual(out.recorded, [2]);
+  assert.equal(out.cleared, true);
+  assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/1.txt\nsrc/2.txt\nsrc/new.txt');
+});
+
+for (const direct of [false, true]) {
+  test(`cross-attempt: dirty shared file refuses retry without touching it (${direct ? 'direct' : 'continue'})`, async () => {
+    await crossAttemptFixture({ shared: 'directory', beforeRetry: async (fx) => {
+      write(fx.WT, 'src/1.txt', 'ambiguous staged work\n');
+      git(fx.WT, 'add', '--', 'src/1.txt');
+      write(fx.WT, 'src/1.txt', 'ambiguous unstaged work\n');
+      if (!direct) assert.equal(continueRun({ statePath: fx.statePath, self: fx.self, now: 3100 }).op, 'dispatch_fabric');
+      const attempt = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3200, policy: dispatchFixture });
+      assert.equal(attempt.outcome, 'precheck-failed');
+      assert.match(attempt.violations.map((v) => v.reason).join('\n'), /ownership cannot be established/);
+      assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).attempt, 1);
+      assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+      assert.equal(git(fx.WT, 'show', ':src/1.txt'), 'ambiguous staged work');
+      assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'ambiguous unstaged work\n');
+      return false;
+    } });
+  });
+}
+
+test('cross-attempt: changed index bytes on a preserved A path still refuse recording', async () => {
+  const fx = await crossAttemptFixture({ beforeRetry: (fx) => {
+    write(fx.WT, 'src/1.txt', 'first index version\n');
+    git(fx.WT, 'add', '--', 'src/1.txt');
+    write(fx.WT, 'src/1.txt', 'operator working copy\n');
+  } });
+  write(fx.WT, 'src/1.txt', 'different index version\n');
+  git(fx.WT, 'add', '--', 'src/1.txt');
+  write(fx.WT, 'src/1.txt', 'operator working copy\n');
+  assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.equal(err.status, 2);
+    assert.match(String(err.stderr), /task 1:.*changed files src\/1\.txt/);
+    return true;
+  });
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
+  assert.equal(git(fx.WT, 'show', ':src/1.txt'), 'different index version');
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/1.txt'), 'utf8'), 'operator working copy\n');
 });
 
 for (const shared of [true, 'directory']) {

@@ -225,9 +225,15 @@ child of a directory declaration, is covered only by a current task undergoing a
 authorization that declares it and whose frozen review repository is that same locus.
 Covered paths must be unchanged from the recorded baseline to **each** covering review's
 frozen base; only subsequent changes belong to those artifacts. Uncovered paths must match
-the baseline through HEAD, index and working tree. Uncommitted in-scope changes outside all
-wave-task declarations also refuse recording with a fresh-episode-review requirement, rather
-than silently narrowing staging. Scope-only changes committed before the current frozen base
+the baseline through HEAD, index and working tree, except for unchanged dirt captured outside
+the retry tasks at the new attempt's launch. The retry records those paths and fingerprints so
+both ordinary `continue` and direct `dispatch-wave` leave them out of staging and cleanup;
+changes to their staged bytes still count as drift. A dirty path shared with a completed task
+at retry launch is refused rather than attributed to the retry. Retry staging intersects the
+original (or controller-amended) wave allow-set with the completed tasks of the new attempt,
+using their launched declarations and any subsequent audited task-file amendments. New
+uncommitted in-scope changes outside all wave-task declarations still refuse recording with a
+fresh-episode-review requirement. Scope-only changes committed before the current frozen base
 remain part of that trusted boundary, not exempt-task bytes. Old receipts never authorize new
 episodes. Normal recording stores the accepted code commit for every done-task declaration's
 repository locus, including clean loci (HEAD captured only after authorization and successful
