@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.5] — 2026-11-20
+
+Blocking execution reviews now keep unfinished tasks `pending` for rework rather than marking them
+`done` on worker digest alone, while preserving rework edits, index state, and accepted siblings
+across native retries and interrupted retry recovery.
+
+### Fixed
+
+- `record-result` consults the final authorization's canonical review selection and blocking predicate
+  (`rework`, `reject`, `error`, or incomplete harness coverage) before marking tasks `done` or
+  staging commits. Blocked tasks stay `pending` with the active wave marker intact
+  (`recover_wave` targets only unfinished tasks), and the dispatch record closes the attempt as
+  `recorded` without claiming task completion.
+- Review-blocked and shared paths are excluded from the wave commit and preserved across `continue`
+  rework (both working tree and index) instead of being reset or re-baselined as pre-existing dirt,
+  while disjoint approved siblings keep their commits and earlier attempt evidence.
+- Native wave retries freeze retry task membership and pre-existing non-task dirt at launch,
+  restricting retry staging to the retried tasks' authorized declarations and audited post-launch
+  amendments within the wave allow-set while preserving older staged/unstaged sibling work and
+  original baseline dirt and refusing ambiguous shared dirt.
+- `continue` recognizes interrupted native wave retries using the same predicate as
+  `dispatch-wave`, binds the active marker to its durable launch proof before resetting, protects
+  accepted sibling paths, the original baseline, and fingerprinted retry-baseline paths (refusing
+  ambiguous dirty ownership without mutating work or launch evidence), and leaves already-published
+  retries untouched.
+- Blocked committed-recovery runs keep `review_recovery: true` and their original frozen
+  `review_context` base and require `--recovery-repo` and `--recovery-head` on the revised clean
+  HEAD rather than ordinary redispatch. Existing limitation: recording the initial block commits
+  bundle state in `MAIN`, so a subsequent committed-recovery attempt can still fail the existing
+  watch preflight check when `MAIN` `HEAD` moved (no watch exemption is introduced).
+
 ## [10.2.4] — 2026-11-18
 
 A plan amendment that widens the files of a task in the active wave now reaches the wave's frozen
