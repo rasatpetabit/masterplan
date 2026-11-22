@@ -151,7 +151,7 @@
 //                                               -> the `dispatch_fabric` op consumer (lib/dispatch-wave.mjs):
 //                                                  NATIVE SPAWN PLAN for the active wave — one governed
 //                                                  descriptor per routed task (routing resolved from
-//                                                  policy/workflow-map.json), returned for the orchestrating
+//                                                  the host dispatch map), returned for the orchestrating
 //                                                  harness to execute with its parallel subagent API, then
 //                                                  the SAME record-result transaction. Idempotent on the
 //                                                  per-wave dispatch record (run_id, wave, 'dispatch_fabric')
@@ -187,63 +187,249 @@
 //                                                  rename/unlink); the .owner.lock is NOT CD-7 state.
 
 import fs from 'node:fs';
-import { taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate } from '../lib/goals.mjs';
-import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, worktreePathFor, worktreeBranchFor, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
-import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
+import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, completionClass, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
-import { planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection } from '../lib/refs.mjs';
-import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } from '../lib/github-coord.mjs';
-import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { snapshotBeforeMigration } from '../lib/migration-snapshot.mjs';
-import { decideNextAction } from '../lib/resume.mjs';
-import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
-import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
-import {
-  resolveReconciliationTarget,
-  buildReconciliationRows,
-  recordReconciliation,
-  reconciliationPath,
-  RECONCILIATION_FILENAME,
-} from '../lib/reconcile-intent.mjs';
 import { runGit } from '../lib/watch-integrity.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { readEnv, childEnv, resolveRunConfig, resolveProbingMinimum, PLANNING_MODES } from '../lib/config.mjs';
-import { projectObligations, resolveResumeBrief, renderResumeBrief } from '../lib/resume-brief.mjs';
-import { contextStatus } from '../lib/context-status.mjs';
-import {
-  replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft,
-  recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview,
-  waiveInterview, reopenInterview, replayLedger,
-  captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture,
-} from '../lib/interview.mjs';
 import { createHash } from 'node:crypto';
-import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
-import { amendPlan } from '../lib/amend.mjs';
-import { readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope } from '../lib/scope-authorization.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity } from '../lib/finish.mjs';
-import { buildIntentIdentity, verifyCheckpointEvidence } from '../lib/checkpoint-evidence.mjs';
-import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
-import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
-import { mapQctlStatus } from '../lib/qctl-status.mjs';
-import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
-import { recordWaveResult, preflightNativeRecording, promoteAmendment } from '../lib/wave-commit.mjs';
 import { hasWaveRecording, recordingKey } from '../lib/wave-recording.mjs';
-import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
-import { dispatchWaveViaFabric, reviewNativeResult, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
-import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
-import { finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } from '../lib/finish-step.mjs';
 import { finishLocusFacts } from '../lib/finish-loci.mjs';
-import { sweepWorktrees } from '../lib/sweep.mjs';
-import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
+
+// Heavy lib modules load on the verb that needs them. version / detect-host stay
+// on the static core; other lightweight verbs load only their own modules.
+const lazyImports = new Map();
+function importLazy(spec) {
+  let pending = lazyImports.get(spec);
+  if (!pending) {
+    pending = import(spec);
+    lazyImports.set(spec, pending);
+  }
+  return pending;
+}
+
+let taskEpisodeEligibleForCompletion;
+let parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate;
+let planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, worktreePathFor, worktreeBranchFor, VALID_WORKTREE_DISPOSITION;
+let collectDiskDirs, collectBundleRecords;
+let planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection;
+let issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults;
+let migrate, detectSchemaVersion, MigrationError;
+let decideNextAction;
+let prepareWave, declaredScope, verifyScope;
+let selectReentry, reentryEventTypes, validateGateReceipt;
+let resolveReconciliationTarget, buildReconciliationRows, recordReconciliation, reconciliationPath, RECONCILIATION_FILENAME;
+let projectObligations, resolveResumeBrief, renderResumeBrief;
+let contextStatus;
+let replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft;
+let recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview;
+let waiveInterview, reopenInterview, replayLedger;
+let captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture;
+let mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml;
+let amendPlan;
+let readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope;
+let buildIntentIdentity, verifyCheckpointEvidence;
+let computeEnqueueKey, decideEnqueue;
+let verifyArtifact, parseQctlDigest;
+let mapQctlStatus;
+let decideBaseDrift;
+let recordWaveResult, preflightNativeRecording, promoteAmendment;
+let pinnedGoalsEvidenceHash;
+let dispatchWaveViaFabric, reviewNativeResult, disposeReviewEpisode;
+let continueRun, dispatchPlanFanout, resolvePlanMdPath;
+let finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash;
+let sweepWorktrees;
+let discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath;
+
+async function loadReviewEpisode() {
+  if (taskEpisodeEligibleForCompletion) return;
+  ({ taskEpisodeEligibleForCompletion } = await importLazy('../lib/review-episode.mjs'));
+}
+async function loadGoals() {
+  if (parseGoals) return;
+  ({ parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate } = await importLazy('../lib/goals.mjs'));
+}
+async function loadWorktree() {
+  if (planWorktreeCreate) return;
+  ({ planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, worktreePathFor, worktreeBranchFor, VALID_DISPOSITIONS: VALID_WORKTREE_DISPOSITION } = await importLazy('../lib/worktree.mjs'));
+}
+async function loadWorktreeFs() {
+  if (collectDiskDirs) return;
+  ({ collectDiskDirs, collectBundleRecords } = await importLazy('../lib/worktree-fs.mjs'));
+}
+async function loadRefs() {
+  if (listRefs) return;
+  ({ planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection } = await importLazy('../lib/refs.mjs'));
+}
+async function loadGithubCoord() {
+  if (issueBodyForTask) return;
+  ({ issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } = await importLazy('../lib/github-coord.mjs'));
+}
+async function loadMigrate() {
+  if (migrate) return;
+  ({ migrate, detectSchemaVersion, MigrationError } = await importLazy('../lib/migrate.mjs'));
+}
+async function loadResume() {
+  if (decideNextAction) return;
+  ({ decideNextAction } = await importLazy('../lib/resume.mjs'));
+}
+async function loadWave() {
+  if (prepareWave) return;
+  ({ prepareWave, declaredScope, verifyScope } = await importLazy('../lib/wave.mjs'));
+}
+async function loadReentryGuard() {
+  if (selectReentry) return;
+  ({ selectReentry, reentryEventTypes, validateGateReceipt } = await importLazy('../lib/reentry-guard.mjs'));
+}
+async function loadReconcileIntent() {
+  if (resolveReconciliationTarget) return;
+  ({ resolveReconciliationTarget, buildReconciliationRows, recordReconciliation, reconciliationPath, RECONCILIATION_FILENAME } = await importLazy('../lib/reconcile-intent.mjs'));
+}
+async function loadResumeBrief() {
+  if (projectObligations) return;
+  ({ projectObligations, resolveResumeBrief, renderResumeBrief } = await importLazy('../lib/resume-brief.mjs'));
+}
+async function loadContextStatus() {
+  if (contextStatus) return;
+  ({ contextStatus } = await importLazy('../lib/context-status.mjs'));
+}
+async function loadInterview() {
+  if (replayInterview) return;
+  ({
+    replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft,
+    recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview,
+    waiveInterview, reopenInterview, replayLedger,
+    captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture,
+  } = await importLazy('../lib/interview.mjs'));
+}
+async function loadPlanMerge() {
+  if (mergePlanFragments) return;
+  ({ mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } = await importLazy('../lib/plan-merge.mjs'));
+}
+async function loadAmend() {
+  if (amendPlan) return;
+  ({ amendPlan } = await importLazy('../lib/amend.mjs'));
+}
+async function loadScopeAuthorization() {
+  if (readScopeEvents) return;
+  ({ readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope } = await importLazy('../lib/scope-authorization.mjs'));
+}
+async function loadCheckpointEvidence() {
+  if (buildIntentIdentity) return;
+  ({ buildIntentIdentity, verifyCheckpointEvidence } = await importLazy('../lib/checkpoint-evidence.mjs'));
+}
+async function loadQctlEnqueue() {
+  if (computeEnqueueKey) return;
+  ({ computeEnqueueKey, decideEnqueue } = await importLazy('../lib/qctl-enqueue.mjs'));
+}
+async function loadQctlArtifact() {
+  if (verifyArtifact) return;
+  ({ verifyArtifact, parseQctlDigest } = await importLazy('../lib/qctl-artifact.mjs'));
+}
+async function loadQctlStatus() {
+  if (mapQctlStatus) return;
+  ({ mapQctlStatus } = await importLazy('../lib/qctl-status.mjs'));
+}
+async function loadQctlRequeue() {
+  if (decideBaseDrift) return;
+  ({ decideBaseDrift } = await importLazy('../lib/qctl-requeue.mjs'));
+}
+async function loadWaveCommit() {
+  if (recordWaveResult) return;
+  ({ recordWaveResult, preflightNativeRecording, promoteAmendment } = await importLazy('../lib/wave-commit.mjs'));
+}
+async function loadPromote() {
+  if (pinnedGoalsEvidenceHash) return;
+  ({ pinnedGoalsEvidenceHash } = await importLazy('../lib/promote.mjs'));
+}
+async function loadDispatchWave() {
+  if (dispatchWaveViaFabric) return;
+  ({ dispatchWaveViaFabric, reviewNativeResult, disposeReviewEpisode } = await importLazy('../lib/dispatch-wave.mjs'));
+}
+async function loadContinue() {
+  if (continueRun) return;
+  ({ continueRun, dispatchPlanFanout, resolvePlanMdPath } = await importLazy('../lib/continue.mjs'));
+}
+async function loadFinishStep() {
+  if (finishStep) return;
+  ({ finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } = await importLazy('../lib/finish-step.mjs'));
+}
+async function loadSweep() {
+  if (sweepWorktrees) return;
+  ({ sweepWorktrees } = await importLazy('../lib/sweep.mjs'));
+}
+async function loadRuns() {
+  if (discoverRuns) return;
+  ({ discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } = await importLazy('../lib/runs.mjs'));
+}
+
+async function loadAllLazy() {
+  await Promise.all([
+    loadReviewEpisode(), loadGoals(), loadWorktree(), loadWorktreeFs(), loadRefs(), loadGithubCoord(),
+    loadMigrate(), loadResume(), loadWave(), loadReentryGuard(), loadReconcileIntent(), loadResumeBrief(),
+    loadContextStatus(), loadInterview(), loadPlanMerge(), loadAmend(), loadScopeAuthorization(),
+    loadCheckpointEvidence(), loadQctlEnqueue(), loadQctlArtifact(), loadQctlStatus(), loadQctlRequeue(),
+    loadWaveCommit(), loadPromote(), loadDispatchWave(), loadContinue(), loadFinishStep(), loadSweep(), loadRuns(),
+  ]);
+}
+
+// Interview verbs and checkpoint consumers recompute skill identity through the
+// schema-snapshot seam. Loaded only for those verbs — a missing module leaves the
+// guard fail-closed and does not take down the rest of dispatch.
+const SCHEMA_SNAPSHOT_VERBS = new Set([
+  'interview', 'set-phase', 'record-gate-review', 'record-intent-check', 'finish-step', 'record-result',
+]);
+let schemaSnapshotLoad = null;
+async function ensureSchemaSnapshot() {
+  await loadInterview();
+  if (!schemaSnapshotLoad) {
+    schemaSnapshotLoad = (async () => {
+      try {
+        const mod = await import('../lib/schema-snapshot.mjs');
+        registerSchemaSnapshotModule(mod);
+      } catch (e) {
+        if (e && e.code === 'ERR_MODULE_NOT_FOUND' && String(e.message).includes('schema-snapshot.mjs')) {
+          registerSchemaSnapshotModule(null);
+        }
+      }
+    })();
+  }
+  await schemaSnapshotLoad;
+}
+
+async function preloadCommand(cmd) {
+  if (cmd === 'decide') {
+    await Promise.all([loadMigrate(), loadResume()]);
+    return;
+  }
+  if (cmd === 'status') {
+    await Promise.all([loadReviewEpisode(), loadRefs(), loadRuns(), loadResumeBrief()]);
+    return;
+  }
+  if (cmd === 'runs') {
+    await Promise.all([loadRuns(), loadResumeBrief()]);
+    return;
+  }
+  if (cmd === 'set-discovery') {
+    await loadRuns();
+    return;
+  }
+  if (cmd == null || cmd === 'version' || cmd === 'detect-host' || cmd === 'config'
+    || cmd === 'acquire-owner' || cmd === 'heartbeat-owner' || cmd === 'release-owner') {
+    return;
+  }
+  await loadAllLazy();
+  if (SCHEMA_SNAPSHOT_VERBS.has(cmd)) await ensureSchemaSnapshot();
+}
+
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
 // The bin fs boundary for lib/reentry-guard.mjs (the pure scanner). These two functions recompute a
@@ -1041,18 +1227,6 @@ function readEventsSafe(bundleDir) {
   }
 }
 
-// The completion class a bundle archived under. `state.completion_class` is authoritative when
-// present; a bundle archived before the field existed reads as `legacy` rather than being
-// guessed at from its status.
-function completionClassOf(state) {
-  if (!state || state.status !== 'archived') return null;
-  if (typeof state.completion_class === 'string' && state.completion_class) return state.completion_class;
-  // `legacy` is what an ABSENT field means. Inferring a modern class from ledger events would
-  // report a class the run never recorded — and would read `complete` off evidence that was
-  // never the completion decision.
-  return 'legacy';
-}
-
 // `pushed: no` until an archive_pushed event lands: a local `complete` is not visible to another
 // host or to GitHub's doctor, and reporting it as pushed would claim a visibility it lacks (§7.4).
 function archivePushedOf(events) {
@@ -1458,7 +1632,7 @@ function cliDispatchHost(flags) {
 }
 
 // ---- subcommand dispatch ----
-function main() {
+async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
   // R9-47: every VALUE_FLAGS name needs a non-empty string. A bare flag, one followed by
@@ -1471,18 +1645,6 @@ function main() {
       die(`--${name} needs a value: --${name} <dir> or --${name}=<dir>`, 2);
     }
   }
-  // §5.5 (review round 2 — finding 3): register the task-52 snapshot module for the
-  // in-process identity guards the guarded surfaces run (the interview verbs' and the
-  // checkpoint consumers' assertSkillIdentity recomputes through this seam). An absent
-  // module keeps the named schema_snapshot_module_not_implemented failure inside the
-  // guard — never fake success. createRequire on the module's own URL keeps the import
-  // tree-local, and a THROW here must not kill the dispatch, only the guard's recompute.
-  try {
-    registerSchemaSnapshotModule(createRequire(import.meta.url)('../lib/schema-snapshot.mjs'));
-  } catch {
-    // The module is absent or failed to load: the capture/amend dispatch below reports
-    // the named failure through its own seam; the guarded verbs fail closed in the guard.
-  }
   // A7 (2026-08-30): fail closed on unknown flags before dispatch — a typo'd/misspelled
   // flag is a hard exit 2, never a silent drop.
   rejectUnknownFlags(flags);
@@ -1491,6 +1653,8 @@ function main() {
   if (REFUSED_VERBS.has(String(cmd))) {
     die(`'${cmd}' is not an mp verb — the bootstrap stage is driven by scripts/bootstrap-v10.mjs (arm/record), never by mp`, 2);
   }
+
+  await preloadCommand(cmd);
 
   switch (cmd) {
     case 'version': {
@@ -4915,7 +5079,7 @@ function main() {
         try { st = parseState(fs.readFileSync(r.statePath, 'utf8')); } catch { st = null; }
         return {
           ...r,
-          completion_class: completionClassOf(st ?? { status: r.status }),
+          completion_class: completionClass(st ?? { status: r.status }),
           pushed: archivePushedOf(evs),
         };
       });
@@ -5006,7 +5170,7 @@ function main() {
       out({
         slug: state.slug ?? null,
         status: state.status ?? null,
-        completion_class: completionClassOf(state),
+        completion_class: completionClass(state),
         pushed: archivePushedOf(statusEvents),
         phase: state.phase ?? null,
         tasks: { done, total: tasks.length },
@@ -5131,4 +5295,8 @@ function isMain() {
     return false; // argv[1] not a real path (e.g. `node --test`) -> imported, not executed
   }
 }
-if (isMain()) main();
+if (isMain()) {
+  main().catch((err) => {
+    die(err && err.message ? err.message : String(err), 1);
+  });
+}

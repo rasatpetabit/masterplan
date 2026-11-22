@@ -50,7 +50,6 @@ import {
   writeWaveDispatchRecord,
   claimAttemptMarker,
   composeWaveToken,
-  waveDispatchAttemptMarkerPath,
   WAVE_DISPATCH_KEY_VERSION,
   captureFullWorkingDiff,
   buildNativeSpawnPlan,
@@ -66,6 +65,10 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { buildTaskReviewEvent } from '../lib/reentry-guard.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { watchBaselinePath, writeWatchBaseline } from '../lib/watch-integrity.mjs';
+
+function waveDispatchAttemptMarkerPath(bundleDir, wave, attempt) {
+  return path.join(bundleDir, `wave-${wave}.dispatch.attempt-${attempt}`);
+}
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
