@@ -5,6 +5,11 @@
 // are testable without a repo fixture. Mirrors lib/finish.mjs's boundaries (see its header).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { finishOtherLoci } from '../lib/finish-loci.mjs';
 import {
   classifyDirt,
   detectBase,
@@ -436,4 +441,91 @@ test('classifyCompletion: no completion field → legacy (never complete)', () =
 
 test('classifyCompletion: an unknown completion value → legacy (defensive)', () => {
   assert.equal(classifyCompletion({ completion: 'bogus' }), 'legacy');
+});
+
+// ---- first-parent landing recovery (finish-loci) ------------------------------
+// These cases need real git: the landing sha is what `rev-list` walks, not a string
+// the rest of this file can fake. The worktree path is absent on purpose so teardown
+// prunes instead of deleting a checkout.
+
+function lociGit(main, args) {
+  return execFileSync('git', ['-C', main, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function initLandingRepo() {
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-loci-land-'));
+  const git = (...args) => lociGit(main, args);
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 't');
+  git('config', 'commit.gpgsign', 'false');
+  return { main, git };
+}
+
+function commitLandingFile(git, main, name, body, message) {
+  fs.writeFileSync(path.join(main, name), body);
+  git('add', name);
+  git('commit', '-q', '-m', message);
+  return git('rev-parse', 'HEAD');
+}
+
+function recoverLanding(main, branch, tip) {
+  const events = [];
+  const locus = { main, wt: path.join(main, 'absent-worktree'), branch, run: false };
+  const verified = new Map([[main, { tip, ref_tip: tip, base: 'main' }]]);
+  const error = finishOtherLoci({ choice: 'merge' }, [locus], [], (event) => events.push(event), verified);
+  const intent = events.find((event) => event.type === 'locus_finish_intent');
+  return { error, merge_sha: intent && intent.merge_sha };
+}
+
+test('finish locus landing: a tip on the first-parent line records that tip', () => {
+  const { main, git } = initLandingRepo();
+  try {
+    commitLandingFile(git, main, 'a.txt', 'a\n', 'A');
+    const tip = commitLandingFile(git, main, 'b.txt', 'b\n', 'B');
+    commitLandingFile(git, main, 'c.txt', 'c\n', 'C');
+    git('branch', 'feature', tip);
+    const recovered = recoverLanding(main, 'feature', tip);
+    assert.equal(recovered.error, null, JSON.stringify(recovered));
+    assert.equal(recovered.merge_sha, tip);
+    assert.notEqual(recovered.merge_sha, git('rev-parse', 'HEAD'));
+  } finally {
+    fs.rmSync(main, { recursive: true, force: true });
+  }
+});
+
+test('finish locus landing: HEAD equal to tip records that commit', () => {
+  const { main, git } = initLandingRepo();
+  try {
+    commitLandingFile(git, main, 'a.txt', 'a\n', 'A');
+    const tip = commitLandingFile(git, main, 'b.txt', 'b\n', 'B');
+    git('branch', 'feature', tip);
+    const recovered = recoverLanding(main, 'feature', tip);
+    assert.equal(recovered.error, null, JSON.stringify(recovered));
+    assert.equal(recovered.merge_sha, tip);
+    assert.equal(recovered.merge_sha, git('rev-parse', 'HEAD'));
+  } finally {
+    fs.rmSync(main, { recursive: true, force: true });
+  }
+});
+
+test('finish locus landing: a tip merged by a merge commit records the merge', () => {
+  const { main, git } = initLandingRepo();
+  try {
+    commitLandingFile(git, main, 'a.txt', 'a\n', 'A');
+    commitLandingFile(git, main, 'b.txt', 'b\n', 'B');
+    git('checkout', '-q', '-b', 'feature');
+    const tip = commitLandingFile(git, main, 'f.txt', 'f\n', 'F');
+    git('checkout', '-q', 'main');
+    git('merge', '--no-ff', '--no-edit', 'feature');
+    const merge = git('rev-parse', 'HEAD');
+    commitLandingFile(git, main, 'c.txt', 'c\n', 'C');
+    const recovered = recoverLanding(main, 'feature', tip);
+    assert.equal(recovered.error, null, JSON.stringify(recovered));
+    assert.equal(recovered.merge_sha, merge);
+    assert.notEqual(recovered.merge_sha, tip);
+    assert.notEqual(recovered.merge_sha, git('rev-parse', 'HEAD'));
+  } finally {
+    fs.rmSync(main, { recursive: true, force: true });
+  }
 });
