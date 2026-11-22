@@ -191,3 +191,38 @@ command = "echo ready;# /usr/local/bin/mp resume-brief --repo-root=$CWD"
   const findings = check('/tmp/repo', { policyPath });
   assert.equal(findings[0].severity, 'WARN');
 });
+
+test('resume-brief-hook: PASS when a [delegate.<name>] session_start table invokes resume-brief with --repo-root', () => {
+  const policyPath = writePolicy(`[delegate.resume_brief]
+events = ["session_start"]
+command = "node /usr/local/bin/mp resume-brief --repo-root=$CWD"
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].id, 'resume-brief-hook');
+  assert.equal(findings[0].severity, 'PASS');
+  assert.equal(findings[0].fix, null);
+});
+
+test('resume-brief-hook: PASS when a [delegate.<name>] session_start table uses an argv array command', () => {
+  const policyPath = writePolicy(`[delegate.resume_brief]
+events = ["session_start"]
+command = ["node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"]
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].id, 'resume-brief-hook');
+  assert.equal(findings[0].severity, 'PASS');
+  assert.equal(findings[0].fix, null);
+});
+
+test('resume-brief-hook: WARN when a [delegate.<name>] session_start table lacks --repo-root', () => {
+  const policyPath = writePolicy(`[delegate.resume_brief]
+events = ["session_start"]
+command = ["node", "/usr/local/bin/mp", "resume-brief"]
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].severity, 'WARN');
+  assert.match(findings[0].summary, /without --repo-root/);
+});

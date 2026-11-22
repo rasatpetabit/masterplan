@@ -445,3 +445,59 @@ test('assertOverlapReviewFresh: matches returns true, mismatch throws', () => {
     /overlap_review_stale/,
   );
 });
+
+test('discoverRuns: single-pass events.jsonl captures max ts, overlap_review, and corrupt warning', () => {
+  const { dir, bundleDir } = makeBundle({
+    slug: 'single-pass',
+    state: 'slug: single-pass\nstatus: in-progress\nphase: execute\n',
+  });
+  const t1 = '2026-01-01T00:00:00.000Z';
+  const t2 = '2026-02-01T00:00:00.000Z';
+  fs.writeFileSync(
+    path.join(bundleDir, 'events.jsonl'),
+    [
+      JSON.stringify({ ts: t1, type: 'bundle_created' }),
+      '{corrupt json',
+      JSON.stringify({ ts: t2, type: 'overlap_review', inventory_sha256: 'abc', outcome: 'clear', candidates: ['x'] }),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  const { runs, warnings } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].last_activity, Date.parse(t2));
+  assert.equal(runs[0].last_activity_source, 'events');
+  assert.deepEqual(runs[0].overlap, { inventory_sha256: 'abc', outcome: 'clear', candidates: ['x'] });
+  assert.ok(warnings.some((w) => w.scope === 'events'));
+});
+
+test('findDanglingRuns: skips events.jsonl, plan.index.json, and owner reads for archived bundles', async () => {
+  const { findDanglingRuns } = await import('../lib/runs.mjs');
+  const { dir, bundleDir } = makeBundle({
+    slug: 'arch-skip',
+    state: 'slug: arch-skip\nstatus: archived\nphase: done\n',
+  });
+  // Put an unreadable directory at events.jsonl & plan.index.json & .owner.lock — if read, would warn or throw.
+  fs.mkdirSync(path.join(bundleDir, 'events.jsonl'));
+  fs.mkdirSync(path.join(bundleDir, 'plan.index.json'));
+  fs.mkdirSync(path.join(bundleDir, '.owner.lock'));
+
+  const { dangling, runs, warnings } = findDanglingRuns({ repoRoot: dir, readConfig: false });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].archived, true);
+  assert.deepEqual(dangling, []);
+  assert.equal(warnings.filter((w) => w.scope === 'events').length, 0);
+});
+
+test('discoverRuns: SKIP_DIRS ignores dist, build, target, .cache, and coverage', () => {
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-skipdirs-'));
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  for (const skip of ['dist', 'build', 'target', '.cache', 'coverage']) {
+    const nested = path.join(root, skip, 'subrepo');
+    fs.mkdirSync(path.join(nested, '.git'), { recursive: true });
+    const bdir = path.join(nested, 'docs', 'masterplan', `skip-${skip}`);
+    fs.mkdirSync(bdir, { recursive: true });
+    fs.writeFileSync(path.join(bdir, 'state.yml'), `slug: skip-${skip}\nstatus: in-progress\n`);
+  }
+  const { runs } = discoverRuns({ repoRoot: root, readConfig: false });
+  assert.deepEqual(runs, []);
+});

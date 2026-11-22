@@ -14,6 +14,7 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readEnv } from '../lib/config.mjs';
+import { loadBundlesSnapshot } from '../lib/doctor/_bundles.mjs';
 
 const SEV_RANK = { SKIP: 0, PASS: 1, WARN: 2, ERROR: 3 };
 
@@ -69,11 +70,33 @@ export function selectCheck(checks, id) {
 // Run every check, crash-isolated: a module that throws becomes ONE ERROR finding so a single
 // buggy check can never abort the whole doctor run (a doctor that dies on its own bug is worse
 // than useless). Returns flattened findings + the exit code (1 iff any ERROR).
+// Lazily populates opts.bundles once per runChecks invocation (when not already supplied by caller)
+// so bundle-scanning checks share a single read-only docs/masterplan/*/state.yml snapshot.
+function withLazyBundles(opts, repoRoot) {
+  if (Object.prototype.hasOwnProperty.call(opts, 'bundles')) return opts;
+  const runOpts = { ...opts };
+  let cached;
+  let loaded = false;
+  Object.defineProperty(runOpts, 'bundles', {
+    enumerable: true,
+    configurable: false,
+    get() {
+      if (!loaded) {
+        cached = loadBundlesSnapshot(repoRoot);
+        loaded = true;
+      }
+      return cached;
+    },
+  });
+  return runOpts;
+}
+
 export function runChecks(checks, repoRoot, opts = {}) {
+  const runOpts = withLazyBundles(opts, repoRoot);
   const findings = [];
   for (const { name, check } of checks) {
     try {
-      const out = check(repoRoot, opts);
+      const out = check(repoRoot, runOpts);
       const arr = Array.isArray(out) ? out : [out];
       for (const f of arr) findings.push(normalizeFinding(name, f));
     } catch (e) {

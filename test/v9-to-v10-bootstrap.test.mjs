@@ -1682,9 +1682,10 @@ test('the legacy-archive check sees a real pre-v10 archived bundle the rollout l
   completeGate(fx);
   archiveLikeFinish(fx, { completion: 'complete' });
   const legacy = legacyArchiveCheck(fx.MAIN);
-  const lf = legacy.find((f) => f.summary.startsWith('legacy-run:'));
+  const lf = legacy.find((f) => f.severity === 'PASS' && /\blegacy-run\b/.test(f.summary));
   assert.ok(lf, JSON.stringify(legacy));
   assert.equal(lf.severity, 'PASS', JSON.stringify(legacy));
+  assert.match(lf.summary, /^1 legacy archive\(s\)/);
 });
 
 // ---------------------------------------------------------------------------

@@ -1552,3 +1552,83 @@ test('worktree-integrity: path-alias seams resolve to owner-host semantics (the 
     fs.rmSync(bd, { recursive: true, force: true });
   }
 });
+
+test('pi-agent-registration: real in-process runRegister reports PASS when synced and WARN on drift', async () => {
+  const { runRegister } = await import('../bin/register-pi-agents.mjs');
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pi-inproc-'));
+  const home = path.join(tmp, 'home');
+  const agentsDir = path.join(tmp, 'agents');
+  const targetDir = path.join(home, '.pi', 'agent', 'agents');
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(agentsDir, 'mp-explorer.md'),
+    '---\nname: mp-explorer\nmodel: sonnet\n---\n\nExplore body.\n',
+    'utf8',
+  );
+  // Write canonical registration into temp targetDir using runRegister.
+  runRegister({ agentsDir, targetDir, check: false, homeDir: home });
+
+  const passFindings = piAgentRegistration(path.join(here, '..'), { homeDir: home, agentsDir, targetDir });
+  assertFindingShape(passFindings);
+  assert.equal(maxSeverity(passFindings), 'PASS', JSON.stringify(passFindings));
+
+  // Mutate target file to trigger real in-process drift detection.
+  fs.writeFileSync(path.join(targetDir, 'mp-explorer.md'), 'drifted\n', 'utf8');
+  const warnFindings = piAgentRegistration(path.join(here, '..'), { homeDir: home, agentsDir, targetDir });
+  assertFindingShape(warnFindings);
+  assert.equal(maxSeverity(warnFindings), 'WARN', JSON.stringify(warnFindings));
+  assert.match(warnFindings[0].summary, /DRIFT|drift/i);
+});
+
+test('dispatcher: runChecks populates read-only shared opts.bundles lazily once across checks', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bundles-cache-'));
+  const bundleDir = path.join(tmp, 'docs', 'masterplan', 'cached-slug');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundleDir, 'state.yml'),
+    'schema_version: 6\nslug: cached-slug\nstatus: in-progress\nphase: building\n',
+    'utf8',
+  );
+
+  const seenSnapshots = [];
+  const checks = [
+    {
+      name: 'first',
+      check: (_repo, opts) => {
+        seenSnapshots.push(opts.bundles);
+        assert.throws(() => { opts.bundles.bySlug['cached-slug'].state.status = 'hacked'; }, TypeError);
+        return [{ id: 'first', severity: 'PASS', summary: 'ok', fix: null }];
+      },
+    },
+    {
+      name: 'second',
+      check: (_repo, opts) => {
+        seenSnapshots.push(opts.bundles);
+        return [{ id: 'second', severity: 'PASS', summary: 'ok', fix: null }];
+      },
+    },
+  ];
+  const callerOpts = { homeDir: tmp };
+  const { exitCode } = runChecks(checks, tmp, callerOpts);
+  assert.equal(exitCode, 0);
+  assert.equal(seenSnapshots.length, 2);
+  assert.equal(seenSnapshots[0], seenSnapshots[1], 'same frozen snapshot instance shared across checks');
+  assert.equal(Object.isFrozen(seenSnapshots[0]), true);
+  assert.equal(seenSnapshots[0].bySlug['cached-slug'].state.status, 'in-progress');
+  assert.equal('bundles' in callerOpts, false, 'caller opts object is not mutated');
+});
+
+test('plan-doc-cruft: combined alternation regex preserves overlapping slug hits', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pdc-overlap-'));
+  for (const slug of ['t9', 't9-cleanup']) {
+    const d = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'state.yml'), `schema_version: 6\nslug: ${slug}\nstatus: archived\nphase: done\n`);
+  }
+  fs.writeFileSync(path.join(tmp, 'docs', 't9-cleanup-notes.md'), '# t9-cleanup notes\n\nSee docs/masterplan/t9-cleanup/plan.md\n');
+  const findings = planDocCruft(tmp);
+  const warn = findings.find((f) => f.severity === 'WARN');
+  assert.ok(warn, JSON.stringify(findings));
+  assert.match(warn.summary, /\bt9 \(filename, bundle-path reference\)/);
+  assert.match(warn.summary, /\bt9-cleanup \(filename, bundle-path reference, heading\)/);
+});

@@ -73,9 +73,10 @@ test('reports archived bundles without a completion class', () => {
   const findings = check(tmp);
   const legacy = findings.filter((f) => f.severity === 'PASS' && f.summary.includes('legacy archive'));
 
-  assert.equal(legacy.length, 2);
-  assert.ok(legacy.some((f) => f.summary.startsWith('legacy-no-completion:')));
-  assert.ok(legacy.some((f) => f.summary.startsWith('v9-finished:')));
+  assert.equal(legacy.length, 1);
+  assert.match(legacy[0].summary, /^2 legacy archive\(s\)/);
+  assert.match(legacy[0].summary, /\blegacy-no-completion\b/);
+  assert.match(legacy[0].summary, /\bv9-finished\b/);
 
   // The non-legacy bundles must not be reported.
   assert.ok(!findings.some((f) => f.summary.includes('archived-complete')));
