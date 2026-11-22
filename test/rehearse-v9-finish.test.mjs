@@ -3,9 +3,9 @@
 // Everything here runs the REAL script against fixtures: a stateful `gh` shim on PATH that
 // records every invocation and simulates the repo/PR lifecycle, a pinned-v9 fixture tree, and
 // the repo's own bootstrap driver. Real network execution is reserved for the live stage.
-import { test, after } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -223,6 +223,22 @@ function makeEnv(_t, { version = '9.10.0', ghRepo = 'acme/throwaway', finishFail
 // A full walk clones repos, installs, merges and pushes; running one per test would take
 // minutes. Identical (env, options) pairs are memoized so the expensive walk happens once
 // and every assertion reads the same real run.
+function spawnCaptured(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+// Identical (env, options) pairs share one in-flight run. The cache stores the promise so
+// concurrent tests await the same real walk instead of starting another.
 const RUN_CACHE = new Map();
 function run(env, opts = {}) {
   const key = `${env.tmp}|${JSON.stringify(opts)}`;
@@ -230,7 +246,7 @@ function run(env, opts = {}) {
   return RUN_CACHE.get(key);
 }
 
-function runUncached(env, { only = null, scratch = null, fault = null, ghFail = null, keep = false } = {}) {
+async function runUncached(env, { only = null, scratch = null, fault = null, ghFail = null, keep = false } = {}) {
   const args = [SCRIPT, `--state=${env.statePath}`, `--targets=${env.targetsPath}`];
   if (only) args.push(`--only=${only}`);
   if (scratch) args.push(`--scratch=${scratch}`);
@@ -238,8 +254,7 @@ function runUncached(env, { only = null, scratch = null, fault = null, ghFail = 
   const selector = JSON.parse(fs.readFileSync(env.targetsPath, 'utf8')).gh_repo || 'throwaway';
   const host = selector.split('/').length === 3 ? selector.split('/')[0] : 'default.invalid';
   const configIndex = Number(process.env.GIT_CONFIG_COUNT || 0);
-  const r = spawnSync('bash', args, {
-    encoding: 'utf8',
+  const r = await spawnCaptured('bash', args, {
     cwd: REPO,
     env: {
       ...process.env,
@@ -274,43 +289,46 @@ function runUncached(env, { only = null, scratch = null, fault = null, ghFail = 
 // per test would cost minutes.
 let DEFAULT = null;
 function defaultRun() {
-  if (!DEFAULT) {
-    const env = makeEnv(null);
-    // Exercise the actual driver-produced resolved artifact, not hand-authored overrides.
-    const root = path.join(env.tmp, 'armed');
-    const bundle = path.join(root, 'docs', 'masterplan', 'rehearsal');
-    fs.mkdirSync(bundle, { recursive: true });
-    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
-    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', path.basename(SCRIPT)));
-    const git = (...args) => {
-      const r = spawnSync('git', ['-c', 'user.name=fixture', '-c', 'user.email=fixture@invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' });
-      assert.equal(r.status, 0, r.stderr);
-    };
-    git('init', '-q', '--initial-branch=masterplan/rehearsal');
-    git('add', 'scripts');
-    git('commit', '-qm', 'fixture');
-    git('branch', 'main');
-    const statePath = path.join(bundle, 'state.yml');
-    fs.copyFileSync(env.statePath, statePath);
-    const targets = JSON.parse(fs.readFileSync(env.targetsPath, 'utf8'));
-    const armed = armStep({ statePath, step: 'rehearsal', targets });
-    assert.equal(armed.ok, true, JSON.stringify(armed));
-    const files = fs.readdirSync(bundle).filter((name) => name.startsWith('.bootstrap-targets-'));
-    assert.equal(files.length, 1);
-    env.targetsPath = path.join(bundle, files[0]);
-    const before = fs.readFileSync(env.targetsPath, 'utf8');
-    assert.equal(JSON.parse(before).tag, 'v10.0.0');
-    assert.equal(files[0], `.bootstrap-targets-${targetsDigest(JSON.parse(before)).slice(0, 16)}.json`);
-    DEFAULT = { env, r: run(env) };
-    assert.equal(fs.readFileSync(env.targetsPath, 'utf8'), before, 'rehearsal must preserve the armed receipt bytes');
-  }
+  if (!DEFAULT) DEFAULT = buildDefaultRun();
   return DEFAULT;
+}
+async function buildDefaultRun() {
+  const env = makeEnv(null);
+  // Exercise the actual driver-produced resolved artifact, not hand-authored overrides.
+  const root = path.join(env.tmp, 'armed');
+  const bundle = path.join(root, 'docs', 'masterplan', 'rehearsal');
+  fs.mkdirSync(bundle, { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.copyFileSync(SCRIPT, path.join(root, 'scripts', path.basename(SCRIPT)));
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=fixture', '-c', 'user.email=fixture@invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  git('init', '-q', '--initial-branch=masterplan/rehearsal');
+  git('add', 'scripts');
+  git('commit', '-qm', 'fixture');
+  git('branch', 'main');
+  const statePath = path.join(bundle, 'state.yml');
+  fs.copyFileSync(env.statePath, statePath);
+  const targets = JSON.parse(fs.readFileSync(env.targetsPath, 'utf8'));
+  const armed = armStep({ statePath, step: 'rehearsal', targets });
+  assert.equal(armed.ok, true, JSON.stringify(armed));
+  const files = fs.readdirSync(bundle).filter((name) => name.startsWith('.bootstrap-targets-'));
+  assert.equal(files.length, 1);
+  env.targetsPath = path.join(bundle, files[0]);
+  const before = fs.readFileSync(env.targetsPath, 'utf8');
+  assert.equal(JSON.parse(before).tag, 'v10.0.0');
+  assert.equal(files[0], `.bootstrap-targets-${targetsDigest(JSON.parse(before)).slice(0, 16)}.json`);
+  const r = await run(env);
+  assert.equal(fs.readFileSync(env.targetsPath, 'utf8'), before, 'rehearsal must preserve the armed receipt bytes');
+  return { env, r };
 }
 
 // ---------------------------------------------------------------------------
 
-test('the whole walk passes against fixtures and reports every row', () => {
-  const { r } = defaultRun();
+describe('rehearse v9 finish', { concurrency: true }, () => {
+test('the whole walk passes against fixtures and reports every row', { concurrency: true }, async () => {
+  const { r } = await defaultRun();
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /REHEARSAL PASS/);
   const failed = [...r.rows].filter(([, v]) => v !== 'ok');
@@ -318,8 +336,8 @@ test('the whole walk passes against fixtures and reports every row', () => {
   assert.ok(r.rows.size >= 55, `expected a broad row set, got ${r.rows.size}`);
 });
 
-test('local fixture walk resolves CI identity when live gh_repo is unset', (t) => {
-  const r = run(makeEnv(t, { ghRepo: null }), { only: 'walk' });
+test('local fixture walk resolves CI identity when live gh_repo is unset', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t, { ghRepo: null }), { only: 'walk' });
   assert.equal(r.status, 0, r.out);
   assert.equal(r.rows.get('fail_ci_wait_recorded'), 'ok');
   assert.equal(r.rows.get('fail_ci_wait_recovered'), 'ok');
@@ -327,8 +345,8 @@ test('local fixture walk resolves CI identity when live gh_repo is unset', (t) =
   assert.deepEqual(r.ghLog, [], 'fixture CI evidence must not call live GitHub');
 });
 
-test('bare creation names use canonical metadata for every PR operation', (t) => {
-  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle' });
+test('bare creation names use canonical metadata for every PR operation', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle' });
   assert.equal(r.status, 0, r.out);
   assert.ok(r.ghLog.some((l) => l === 'api user --jq .login'));
   assert.ok(r.ghLog.some((l) => l.startsWith('repo create acme/throwaway ')));
@@ -338,9 +356,9 @@ test('bare creation names use canonical metadata for every PR operation', (t) =>
   assert.ok(r.ghLog.some((l) => l === 'repo delete acme/throwaway --yes'));
 });
 
-test('explicit creation host is preserved for PR operations and cleanup', (t) => {
+test('explicit creation host is preserved for PR operations and cleanup', { concurrency: true }, async (t) => {
   const repo = 'enterprise.invalid/acme/throwaway';
-  const r = run(makeEnv(t, { ghRepo: repo }), { only: 'gh_cycle' });
+  const r = await run(makeEnv(t, { ghRepo: repo }), { only: 'gh_cycle' });
   assert.equal(r.status, 0, r.out);
   const calls = r.ghLog.filter((l) => /^pr (create|merge|view) /.test(l));
   assert.ok(calls.length >= 5);
@@ -348,15 +366,15 @@ test('explicit creation host is preserved for PR operations and cleanup', (t) =>
   assert.deepEqual(r.ghLog.filter((l) => l.startsWith('repo delete ')), [`repo delete ${repo} --yes`]);
 });
 
-test('failed creation never deletes a pre-existing repository', (t) => {
-  const r = run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_create' });
+test('failed creation never deletes a pre-existing repository', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_create' });
   assert.notEqual(r.status, 0);
   assert.equal(r.rows.get('gh_repo_create'), 'fail');
   assert.equal(r.ghLog.filter((l) => l.startsWith('repo delete ')).length, 0);
 });
 
-test('metadata failure retains the successfully created identity for cleanup', (t) => {
-  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'repo_view' });
+test('metadata failure retains the successfully created identity for cleanup', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'repo_view' });
   assert.notEqual(r.status, 0);
   assert.match(r.out, /metadata unavailable/);
   assert.ok(r.ghLog.some((l) => l === 'repo delete acme/throwaway --yes'), r.out);
@@ -364,9 +382,9 @@ test('metadata failure retains the successfully created identity for cleanup', (
 });
 
 for (const fault of ['meta_owner', 'meta_name', 'meta_host', 'meta_path', 'meta_scheme', 'meta_malformed']) {
-  test(`metadata mismatch ${fault} stops before push/PR and cannot redirect cleanup`, (t) => {
+  test(`metadata mismatch ${fault} stops before push/PR and cannot redirect cleanup`, { concurrency: true }, async (t) => {
     const env = makeEnv(t);
-    const r = run(env, { only: 'gh_cycle', ghFail: fault });
+    const r = await run(env, { only: 'gh_cycle', ghFail: fault });
     assert.notEqual(r.status, 0, r.out);
     assert.equal(r.rows.get('gh_repo_resolve'), 'fail', r.out);
     assert.deepEqual(r.ghLog.filter((l) => l.startsWith('repo delete ')), ['repo delete acme/throwaway --yes']);
@@ -377,14 +395,14 @@ for (const fault of ['meta_owner', 'meta_name', 'meta_host', 'meta_path', 'meta_
   });
 }
 
-test('bare creation refuses an unavailable authenticated identity before creating anything', (t) => {
-  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'auth_identity' });
+test('bare creation refuses an unavailable authenticated identity before creating anything', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'auth_identity' });
   assert.notEqual(r.status, 0);
   assert.equal(r.ghLog.filter((l) => l.startsWith('repo create ') || l.startsWith('repo delete ')).length, 0);
 });
 
-test('cleanup denial reports the owned repository and diagnostic', (t) => {
-  const r = run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_delete' });
+test('cleanup denial reports the owned repository and diagnostic', { concurrency: true }, async (t) => {
+  const r = await run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_delete' });
   assert.notEqual(r.status, 0);
   assert.match(r.out, /acme\/throwaway/);
   assert.match(r.out, /deletion denied/);
@@ -393,8 +411,8 @@ test('cleanup denial reports the owned repository and diagnostic', (t) => {
 
 // ---- the pinned v9 executor -------------------------------------------------
 
-test('the pinned 9.10.0 copy is what actually runs the finish verb', () => {
-  const { env, r } = defaultRun();
+test('the pinned 9.10.0 copy is what actually runs the finish verb', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('pinned_v9_copy'), 'ok');
   const pinLine = /PINNED_FINISH_BINARY=(\S+)/.exec(r.out);
   assert.ok(pinLine, 'the script must name the binary every rehearsed finish uses');
@@ -414,9 +432,9 @@ test('the pinned 9.10.0 copy is what actually runs the finish verb', () => {
   assert.ok(r.out.indexOf('ROW pinned_v9_copy') < r.out.indexOf('ROW walk_install_pi'));
 });
 
-test('a pinned tree that does not print 9.10.0 ABORTS before anything world-touching', (t) => {
+test('a pinned tree that does not print 9.10.0 ABORTS before anything world-touching', { concurrency: true }, async (t) => {
   const env = makeEnv(t, { version: '10.0.0' }); // the wrong version in the pinned slot
-  const r = run(env);
+  const r = await run(env);
   assert.equal(r.rows.get('pinned_v9_copy'), 'fail');
   assert.equal(r.status, 4, r.out);
   assert.match(r.out, /REHEARSAL ABORTED/);
@@ -427,8 +445,8 @@ test('a pinned tree that does not print 9.10.0 ABORTS before anything world-touc
 
 // ---- fixtures ---------------------------------------------------------------
 
-test('the bare remote and second clone are built, and the v9 diff the assessor sees is non-empty', () => {
-  const { env, r } = defaultRun();
+test('the bare remote and second clone are built, and the v9 diff the assessor sees is non-empty', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('second_clone_built'), 'ok');
   assert.equal(r.rows.get('clone_ahead_of_remote'), 'ok', 'the fixture clone starts ahead of its remote by a non-bundle commit');
   assert.equal(r.rows.get('v9_diff_non_empty'), 'ok');
@@ -437,8 +455,8 @@ test('the bare remote and second clone are built, and the v9 diff the assessor s
 
 // ---- the walk ---------------------------------------------------------------
 
-test('every step of the bootstrap walk is armed and recorded through the real driver', () => {
-  const { env, r } = defaultRun();
+test('every step of the bootstrap walk is armed and recorded through the real driver', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   // The driver enforces its own order and its own pre/postconditions, so each of these rows
   // passes only because the fixture really produced what that step requires.
   const steps = [
@@ -455,8 +473,8 @@ test('every step of the bootstrap walk is armed and recorded through the real dr
   }
 });
 
-test('a failed step is durable, BLOCKS the next step, and is closed by a recovery record', () => {
-  const { env, r } = defaultRun();
+test('a failed step is durable, BLOCKS the next step, and is closed by a recovery record', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   // §10.3: every failure and its recovery are a failed/recovered pair, and the stage never
   // proceeds past a failed step.
   assert.equal(r.rows.get('fail_ci_wait_recorded'), 'ok');
@@ -464,8 +482,8 @@ test('a failed step is durable, BLOCKS the next step, and is closed by a recover
   assert.equal(r.rows.get('fail_ci_wait_recovered'), 'ok');
 });
 
-test('a red tag CI really blocks the install, and a green one really allows exactly one', () => {
-  const { env, r } = defaultRun();
+test('a red tag CI really blocks the install, and a green one really allows exactly one', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   // Not a variable compared to itself: the install marker is written only when install-pi
   // actually runs, and the red window is bounded by the driver refusing to arm install_pi.
   assert.equal(r.rows.get('ci_red_no_install'), 'ok');
@@ -474,8 +492,8 @@ test('a red tag CI really blocks the install, and a green one really allows exac
   assert.ok(r.out.indexOf('ROW ci_red_no_install') < r.out.indexOf('ROW ci_green_allows_install'));
 });
 
-test('the Pi surface is really installed and both surfaces end the walk at v10', () => {
-  const { env, r } = defaultRun();
+test('the Pi surface is really installed and both surfaces end the walk at v10', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('walk_install_pi'), 'ok', 'a real install-pi run against fixture roots');
   assert.equal(r.rows.get('walk_claude_surface'), 'ok');
   assert.equal(r.rows.get('surfaces_live_at_v10'), 'ok');
@@ -485,8 +503,8 @@ test('the Pi surface is really installed and both surfaces end the walk at v10',
   assert.equal(surfaces[2], '10.0.0');
 });
 
-test('an induced install failure is refused and the rollback is verified by installed content', () => {
-  const { env, r } = defaultRun();
+test('an induced install failure is refused and the rollback is verified by installed content', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('install_pi_failure_refused'), 'ok');
   assert.equal(r.rows.get('install_pi_surface_intact'), 'ok', 'the failed install left the live surface alone');
   // The failure is a recorded TURN of the driver's install_pi step, not a shell-side aside:
@@ -503,8 +521,8 @@ test('an induced install failure is refused and the rollback is verified by inst
 
 // ---- merge, audit and gate --------------------------------------------------
 
-test('the PR merge is emulated by the second clone and the finish merge is a real no-op', () => {
-  const { env, r } = defaultRun();
+test('the PR merge is emulated by the second clone and the finish merge is a real no-op', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('walk_pr_merge'), 'ok');
   assert.equal(r.rows.get('merge_sha_ancestor_of_remote'), 'ok');
   assert.equal(r.rows.get('merge_sha_descendant_of_tip'), 'ok');
@@ -513,23 +531,23 @@ test('the PR merge is emulated by the second clone and the finish merge is a rea
   assert.equal(r.rows.get('finish_merge_is_noop'), 'ok');
 });
 
-test('a missing remote merge is detected, with a positive control against an inverted check', () => {
-  const { env, r } = defaultRun();
+test('a missing remote merge is detected, with a positive control against an inverted check', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('missing_remote_merge_stops'), 'ok');
   // Without this control the row could pass by testing the ancestry relation backwards.
   assert.equal(r.rows.get('merged_tip_positive_control'), 'ok');
 });
 
-test('the base audit accepts bundle commits, stops on a foreign one, and distinguishes dirty state', () => {
-  const { env, r } = defaultRun();
+test('the base audit accepts bundle commits, stops on a foreign one, and distinguishes dirty state', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('base_audit_bundle_only'), 'ok');
   assert.equal(r.rows.get('base_audit_foreign_stops'), 'ok');
   assert.equal(r.rows.get('dirty_non_bundle_stops'), 'ok');
   assert.equal(r.rows.get('dirty_bundle_allowed'), 'ok', 'a bundle-only write is not non-bundle dirt');
 });
 
-test('the equality rule is enforced by the DRIVER, with a positive control in the same state', () => {
-  const { r } = defaultRun();
+test('the equality rule is enforced by the DRIVER, with a positive control in the same state', { concurrency: true }, async () => {
+  const { r } = await defaultRun();
   // Without the control, "the arm was refused" proves nothing: an arm can refuse for ordering
   // or completion reasons unrelated to the remote tip.
   assert.equal(r.rows.get('gate_arms_before_remote_moves'), 'ok', 'the gate arms while the remote still matches');
@@ -542,8 +560,8 @@ test('the equality rule is enforced by the DRIVER, with a positive control in th
   assert.ok(r.out.indexOf('ROW gate_arms_before_remote_moves') < r.out.indexOf('ROW gate_equality_stops'));
 });
 
-test('the diverged-remote disposition is a DRIVER refusal, not just a git rejection', () => {
-  const { r } = defaultRun();
+test('the diverged-remote disposition is a DRIVER refusal, not just a git rejection', { concurrency: true }, async () => {
+  const { r } = await defaultRun();
   assert.equal(r.rows.get('main_push_rejected'), 'ok');
   assert.match(r.out, /the driver refuses main_push while origin\/main is not an ancestor/);
   assert.equal(r.rows.get('main_push_rejected_by_git'), 'ok', 'nothing is forced through by hand either');
@@ -552,8 +570,8 @@ test('the diverged-remote disposition is a DRIVER refusal, not just a git reject
   assert.equal(r.rows.get('walk_main_push'), 'ok');
 });
 
-test('re-target eligibility has a positive AND a negative fixture', () => {
-  const { r } = defaultRun();
+test('re-target eligibility has a positive AND a negative fixture', { concurrency: true }, async () => {
+  const { r } = await defaultRun();
   assert.equal(r.rows.get('gate_equality_stops'), 'ok');
   assert.equal(r.rows.get('gate_retarget_eligible'), 'ok');
   // Without the negative row the eligibility check could pass everything and still look green.
@@ -561,8 +579,8 @@ test('re-target eligibility has a positive AND a negative fixture', () => {
     'a foreign change to a branch path must NOT be re-targetable');
 });
 
-test('a partial push is a REAL partial state before the retry completes it', () => {
-  const { env, r } = defaultRun();
+test('a partial push is a REAL partial state before the retry completes it', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   // The precondition row is what stops this being an idempotent re-push dressed up as a retry.
   assert.equal(r.rows.get('push_partial_state'), 'ok');
   assert.match(r.out, /the fixture really is partial: branch present, tag absent/);
@@ -572,8 +590,8 @@ test('a partial push is a REAL partial state before the retry completes it', () 
   assert.equal(r.rows.get('push_tag_moved_stops'), 'ok');
 });
 
-test('every 10.3 failure row has a fixture and lands on its named disposition', () => {
-  const { env, r } = defaultRun();
+test('every 10.3 failure row has a fixture and lands on its named disposition', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   const expected = [
     'push_tag_idempotent',        // repeated push: an identical tag is a no-op
     'push_tag_moved_stops',       // a differing remote tag: stop, never move a public tag
@@ -610,8 +628,8 @@ test('every 10.3 failure row has a fixture and lands on its named disposition', 
 
 // ---- the gh cycle -----------------------------------------------------------
 
-test('the throwaway repo is POPULATED before the PR — an empty repo cannot take one', () => {
-  const { env, r } = defaultRun();
+test('the throwaway repo is POPULATED before the PR — an empty repo cannot take one', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   assert.equal(r.rows.get('gh_repo_populated'), 'ok');
   const verbs = r.ghLog.map((l) => l.split(/\s+/).slice(0, 2).join(' '));
   // repo view (for the clone URL) and the branch pushes come between create and pr create.
@@ -622,8 +640,8 @@ test('the throwaway repo is POPULATED before the PR — an empty repo cannot tak
   assert.equal(r.rows.get('gh_pr_create'), 'ok');
 });
 
-test('the OPEN reconciliation uses a DISTINCT unmerged head, as real GitHub requires', () => {
-  const { env, r } = defaultRun();
+test('the OPEN reconciliation uses a DISTINCT unmerged head, as real GitHub requires', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   // Reusing the merged branch would be rejected live ("no commits between"), and the shim
   // rejects it too — so this row proves a separate probe branch was pushed and opened.
   assert.equal(r.rows.get('gh_pr_reconcile_open'), 'ok');
@@ -637,8 +655,8 @@ test('the OPEN reconciliation uses a DISTINCT unmerged head, as real GitHub requ
   );
 });
 
-test('the gh cycle runs create, view, pr create, merge, view and delete on a private repo', () => {
-  const { env, r } = defaultRun();
+test('the gh cycle runs create, view, pr create, merge, view and delete on a private repo', { concurrency: true }, async () => {
+  const { env, r } = await defaultRun();
   const verbs = r.ghLog.map((l) => l.split(/\s+/).slice(0, 2).join(' '));
   assert.equal(verbs[0], 'repo create');
   assert.equal(verbs.at(-1), 'repo delete');
@@ -651,24 +669,24 @@ test('the gh cycle runs create, view, pr create, merge, view and delete on a pri
   assert.ok(r.ghLog.some((l) => l.includes('--json state,mergedAt,mergeCommit')), 'reconcile by reading state, never re-merge blind');
 });
 
-test('the throwaway repo is deleted after success and after a mid-cycle failure', (t) => {
+test('the throwaway repo is deleted after success and after a mid-cycle failure', { concurrency: true }, async (t) => {
   const env = makeEnv(t);
-  const ok = run(env);
+  const ok = await run(env, { only: 'gh_cycle' });
   assert.equal(ok.ghLog.at(-1).startsWith('repo delete'), true, JSON.stringify(ok.ghLog));
   assert.match(fs.readFileSync(`${env.ghLog}.state`, 'utf8'), /deleted/);
 
   const env2 = makeEnv(t);
   // The script dies between create and its own delete; only the EXIT trap can clean up.
-  const bad = run(env2, { fault: 'gh_mid_cycle' });
+  const bad = await run(env2, { only: 'gh_cycle', fault: 'gh_mid_cycle' });
   assert.equal(bad.status, 3, bad.out);
   assert.match(bad.out, /simulated mid-cycle failure/);
   assert.equal(bad.ghLog.at(-1).startsWith('repo delete'), true, JSON.stringify(bad.ghLog));
   assert.match(fs.readFileSync(`${env2.ghLog}.state`, 'utf8'), /deleted/, 'the trap deleted the throwaway repo');
 });
 
-test('a failing gh pr merge is reported as a failed row and still cleans up', (t) => {
+test('a failing gh pr merge is reported as a failed row and still cleans up', { concurrency: true }, async (t) => {
   const env = makeEnv(t);
-  const r = run(env, { ghFail: 'pr_merge' });
+  const r = await run(env, { only: 'gh_cycle', ghFail: 'pr_merge' });
   assert.equal(r.rows.get('gh_pr_merge'), 'fail');
   // pr view then reports OPEN, which is the "retry once, then stop" row — not a silent pass.
   assert.equal(r.rows.get('gh_pr_reconcile_merged'), 'fail');
@@ -678,28 +696,28 @@ test('a failing gh pr merge is reported as a failed row and still cleans up', (t
 
 // ---- hygiene and arguments --------------------------------------------------
 
-test('the scratch tree is removed on exit, and --keep preserves it', (t) => {
+test('the scratch tree is removed on exit, and --keep preserves it', { concurrency: true }, async (t) => {
   const env = makeEnv(t);
   const scratch = path.join(env.tmp, 'scratch-removed');
-  run(env, { scratch });
+  await run(env, { only: 'pinned_finish', scratch });
   assert.equal(fs.existsSync(scratch), false, 'the scratch tree must not survive the run');
 
   const env2 = makeEnv(t);
   const kept = path.join(env2.tmp, 'scratch-kept');
-  run(env2, { scratch: kept, keep: true });
+  await run(env2, { only: 'pinned_finish', scratch: kept, keep: true });
   assert.equal(fs.existsSync(kept), true, '--keep preserves the scratch tree for inspection');
   assert.equal(fs.existsSync(path.join(kept, 'remote.git')), true, 'the bare fixture remote was built there');
   assert.equal(fs.existsSync(path.join(kept, 'pinned-9.10.0', 'bin', 'masterplan.mjs')), true, 'the pinned copy is a real tree');
 });
 
-test('--only runs one selected group', (t) => {
+test('--only runs one selected group', { concurrency: true }, async (t) => {
   const env = makeEnv(t);
-  const r = run(env, { only: 'gh_cycle' });
+  const r = await run(env, { only: 'gh_cycle' });
   assert.equal(r.rows.has('gh_repo_create'), true);
   assert.equal(r.rows.has('walk_install_pi'), false, 'unselected groups do not run');
 });
 
-test('bad arguments are refused rather than half-run', (t) => {
+test('bad arguments are refused rather than half-run', { concurrency: true }, async (t) => {
   const env = makeEnv(t);
   const missing = spawnSync('bash', [SCRIPT, `--targets=${env.targetsPath}`], { encoding: 'utf8', cwd: REPO });
   assert.equal(missing.status, 2);
@@ -714,21 +732,21 @@ test('bad arguments are refused rather than half-run', (t) => {
 
 // ---- negative fixtures: each proves a row would actually catch its failure --------
 
-test('a pinned tree reporting 19.10.0 does not satisfy the exact-9.10.0 pin', (t) => {
+test('a pinned tree reporting 19.10.0 does not satisfy the exact-9.10.0 pin', { concurrency: true }, async (t) => {
   // A substring match would accept this; the pin invariant is an exact version token.
   const env = makeEnv(t, { version: '19.10.0' });
-  const r = run(env, { scratch: path.join(env.tmp, 'scratch-1910') });
+  const r = await run(env, { scratch: path.join(env.tmp, 'scratch-1910') });
   assert.equal(r.rows.get('pinned_v9_copy'), 'fail');
   assert.equal(r.status, 4, r.out);
   assert.match(r.out, /REHEARSAL ABORTED/);
   assert.deepEqual(r.ghLog, [], 'nothing world-touching ran under the wrong executor');
 });
 
-test('a pinned finish-step that exits non-zero fails the rehearsal, however loudly it prints', (t) => {
+test('a pinned finish-step that exits non-zero fails the rehearsal, however loudly it prints', { concurrency: true }, async (t) => {
   // stdout and stderr both land in the capture file, so "the file is non-empty" would accept
   // an error message. The exit status is what the row reads.
   const env = makeEnv(t, { finishFails: true });
-  const r = run(env, { only: 'pinned_finish', scratch: path.join(env.tmp, 'scratch-badfinish') });
+  const r = await run(env, { only: 'pinned_finish', scratch: path.join(env.tmp, 'scratch-badfinish') });
   assert.equal(r.rows.get('pinned_finish_step'), 'fail', r.out);
   assert.match(r.out, /finish-step through the pinned copy failed/);
   assert.notEqual(r.status, 0);
@@ -736,34 +754,34 @@ test('a pinned finish-step that exits non-zero fails the rehearsal, however loud
   assert.ok(r.pinnedLog.some((l) => l.startsWith('finish-step')));
 });
 
-test('a state file that does not exist is refused before any gh call', (t) => {
+test('a state file that does not exist is refused before any gh call', { concurrency: true }, async (t) => {
   const env = makeEnv(t, { statePath: '/nonexistent/rehearsal-state.yml' });
-  const r = run(env);
+  const r = await run(env);
   assert.equal(r.status, 2, r.out);
   assert.match(r.out, /state file not found/);
   assert.deepEqual(r.ghLog, [], 'no gh command may run under an unreadable state');
 });
 
-test('a MERGED response with no mergeCommit oid fails the reconciliation row', (t) => {
+test('a MERGED response with no mergeCommit oid fails the reconciliation row', { concurrency: true }, async (t) => {
   // "record the sha and continue" is only honest if a sha was actually taken.
   const env = makeEnv(t);
-  const r = run(env, { ghFail: 'merged_without_oid', scratch: path.join(env.tmp, 'scratch-nooid') });
+  const r = await run(env, { only: 'gh_cycle', ghFail: 'merged_without_oid', scratch: path.join(env.tmp, 'scratch-nooid') });
   assert.equal(r.rows.get('gh_pr_reconcile_merged'), 'fail', r.out);
   assert.match(r.out, /MERGED but no mergeCommit\.oid/);
 });
 
 // ---- the wave-11 rehearsal repairs: --only validation + the real release contract ------
 
-test("a typo'd --only group is refused at startup — zero evidence is never a pass", (t) => {
+test("a typo'd --only group is refused at startup — zero evidence is never a pass", { concurrency: true }, async (t) => {
   const env = makeEnv(t);
-  const r = run(env, { only: 'realease_rows' }); // the typo that used to select nothing and PASS
+  const r = await run(env, { only: 'realease_rows' }); // the typo that used to select nothing and PASS
   assert.equal(r.status, 2, `expected exit 2 on the unknown group, got ${r.status}`);
   assert.match(r.out, /unknown --only group: realease_rows/);
   assert.match(r.out, /known: /);
   assert.ok(!/REHEARSAL PASS/.test(r.out), 'zero rows must never print REHEARSAL PASS');
 });
 
-test("the release rows drive the REAL single_commit contract, not the row's own arithmetic", (t) => {
+test("the release rows drive the REAL single_commit contract, not the row's own arithmetic", { concurrency: true }, async (t) => {
   // release_changelog_allowed: the real validator ACCEPTS the legitimate CHANGELOG-only
   // release (empty problem set); release_extra_commit_refused: the real validator NAMES
   // the sneaky extra commit (single_commit). The old extra row counted the commit it had
@@ -771,7 +789,7 @@ test("the release rows drive the REAL single_commit contract, not the row's own 
   // The FULL run: the walk group builds the release tip the release rows judge (a bare
   // --only=release_rows fixture has no release to accept).
   const env = makeEnv(t);
-  const r = run(env, { scratch: path.join(env.tmp, 'scratch-realcontract') });
+  const r = await run(env, { scratch: path.join(env.tmp, 'scratch-realcontract') });
   assert.equal(r.rows.get('release_changelog_allowed'), 'ok',
     `the real contract must accept the CHANGELOG-only release: ${r.out}`);
   assert.equal(r.rows.get('release_extra_commit_refused'), 'ok',
@@ -779,3 +797,4 @@ test("the release rows drive the REAL single_commit contract, not the row's own 
   assert.match(r.out, /NAMES the sneaky extra commit/);
 });
 
+});

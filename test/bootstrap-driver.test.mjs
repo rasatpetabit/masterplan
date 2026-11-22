@@ -5,7 +5,7 @@
 // same base sha; --targets overrides route every path to fixture locations; and one precondition
 // plus one postcondition from each of the three step shapes (git-only, gh-network,
 // filesystem-install) prove the step abstraction before the dependent suites build on it.
-import { test, after } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,9 +46,7 @@ function events(statePath) {
 }
 
 // A MAIN repo with a bare remote, a run branch one commit ahead, a bundle, and fixture surfaces.
-function makeFixture(t, { version = '10.0.0' } = {}) {
-  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bootstrap-'));
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+function createFixtureTree(tmp, version) {
   const MAIN = path.join(tmp, 'main');
   const bare = path.join(tmp, 'remote.git');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -106,6 +104,84 @@ exit 0
   return { tmp, MAIN, bare, bundleDir, statePath, targets, branch, tip, slug, installRoot, claudeDir, worktree };
 }
 
+
+let FIXTURE_TEMPLATE_ROOT = null;
+
+// A linked worktree stores absolute gitdir paths. Copying the pristine tree is safe
+// only after those pointers and the origin URL are repointed at the copy.
+function retargetCopiedFixture(fromRoot, toRoot) {
+  const files = [
+    path.join(toRoot, 'main', '.git', 'config'),
+    path.join(toRoot, 'work tree', '.git'),
+    path.join(toRoot, 'gh'),
+  ];
+  const admin = path.join(toRoot, 'main', '.git', 'worktrees');
+  for (const name of fs.readdirSync(admin)) {
+    const gitdir = path.join(admin, name, 'gitdir');
+    if (fs.existsSync(gitdir)) files.push(gitdir);
+  }
+  for (const file of files) {
+    const body = fs.readFileSync(file, 'utf8');
+    if (!body.includes(fromRoot)) continue;
+    fs.writeFileSync(file, body.split(fromRoot).join(toRoot));
+  }
+  fs.chmodSync(path.join(toRoot, 'gh'), 0o755);
+}
+
+function verifyCopiedFixture(fx) {
+  const status = git(fx.MAIN, 'status', '--porcelain=v1', '-b');
+  const remote = git(fx.MAIN, 'remote', 'get-url', 'origin');
+  const wtStatus = git(fx.worktree, 'status', '--porcelain=v1', '-b');
+  if (remote !== fx.bare) throw new Error(`copied fixture remote is ${remote}, expected ${fx.bare}`);
+  if (!status.startsWith('## main')) throw new Error(`copied fixture status drifted: ${status}`);
+  if (!wtStatus.startsWith(`## ${fx.branch}`)) throw new Error(`copied worktree status drifted: ${wtStatus}`);
+}
+
+function fixtureHandle(tmp, version) {
+  const MAIN = path.join(tmp, 'main');
+  const bare = path.join(tmp, 'remote.git');
+  const worktree = path.join(tmp, 'work tree');
+  const slug = 'bs';
+  const branch = `masterplan/${slug}`;
+  const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
+  const statePath = path.join(bundleDir, 'state.yml');
+  const installRoot = path.join(tmp, 'install-root');
+  const piRoot = path.join(tmp, 'pi');
+  const claudeDir = path.join(tmp, 'claude-config');
+  const targets = {
+    remote: 'origin', version, branch, worktree,
+    install_root: installRoot, pi_root: piRoot, claude_config_dir: claudeDir,
+    gh: path.join(tmp, 'gh'), gh_repo: 'fixture/repo',
+    workspace_roots: [{ dir: tmp, depth: 1 }], verify_cmd: 'true',
+  };
+  const tip = git(MAIN, 'rev-parse', branch);
+  return { tmp, MAIN, bare, bundleDir, statePath, targets, branch, tip, slug, installRoot, claudeDir, worktree };
+}
+
+before(() => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bootstrap-template-'));
+  createFixtureTree(tmp, '10.0.0');
+  FIXTURE_TEMPLATE_ROOT = tmp;
+  // Prove the copy is a working repository once; each test then uses an isolated copy.
+  const probe = mkdtempTracked(path.join(os.tmpdir(), 'mp-bootstrap-probe-'));
+  fs.cpSync(FIXTURE_TEMPLATE_ROOT, probe, { recursive: true });
+  retargetCopiedFixture(FIXTURE_TEMPLATE_ROOT, probe);
+  verifyCopiedFixture(fixtureHandle(probe, '10.0.0'));
+  fs.rmSync(probe, { recursive: true, force: true });
+});
+
+function makeFixture(t, { version = '10.0.0' } = {}) {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bootstrap-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  if (version === '10.0.0' && FIXTURE_TEMPLATE_ROOT) {
+    fs.cpSync(FIXTURE_TEMPLATE_ROOT, tmp, { recursive: true });
+    retargetCopiedFixture(FIXTURE_TEMPLATE_ROOT, tmp);
+    return fixtureHandle(tmp, version);
+  }
+  createFixtureTree(tmp, version);
+  return fixtureHandle(tmp, version);
+}
+
 // The rehearsal script lands on the run branch through the linked worktree (the execution tree).
 function addRehearsalScript(fx) {
   write(fx.worktree, 'scripts/rehearse-v9-finish.sh', '#!/bin/sh\nexit 0\n');
@@ -158,7 +234,8 @@ function walk(fx, step, data = {}, extra = {}) {
   return rec;
 }
 
-test('step table: fixed enum order, pass-2 omissions, a shape per step', () => {
+describe('bootstrap driver', { concurrency: true }, () => {
+test('step table: fixed enum order, pass-2 omissions, a shape per step', { concurrency: true }, async () => {
   assert.deepEqual(STEP_ORDER, ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess', 'release', 'push', 'ci_wait', 'install_pi', 'main_push', 'publish_ack', 'pr_merge', 'claude_surface', 'surfaces_live', 'gate']);
   assert.deepEqual(PASS2_OMITTED, ['rehearsal', 'docs_normalize']);
   // main_push's omission is EVENT-CONDITIONAL now: a corrective pass omits it only when an
@@ -182,7 +259,7 @@ test('step table: fixed enum order, pass-2 omissions, a shape per step', () => {
   }
 });
 
-test('targets: live defaults derive from HOME; overrides route every path to fixtures; unknown keys refuse', (t) => {
+test('targets: live defaults derive from HOME; overrides route every path to fixtures; unknown keys refuse', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const live = resolveTargets(fx.MAIN, { slug: 'x' }, {});
   assert.equal(live.remote, 'origin');
@@ -198,7 +275,7 @@ test('targets: live defaults derive from HOME; overrides route every path to fix
   assert.throws(() => resolveTargets(fx.MAIN, { slug: 'x' }, { workspace_roots: [{ dir: 1 }] }), /workspace_roots/);
 });
 
-test('status reconstructs pass, completed steps, failures and the next action from disk alone', (t) => {
+test('status reconstructs pass, completed steps, failures and the next action from disk alone', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   let st = bootstrapStatus(fx.statePath);
   assert.equal(st.pass, 1);
@@ -235,7 +312,7 @@ test('status reconstructs pass, completed steps, failures and the next action fr
   assert.equal(st.next.step, 'review');
 });
 
-test('a done-at-an-old-tip record is stale: after a failed-review fix moves the tip, verify re-arms and the §10.2 chain re-runs', (t) => {
+test('a done-at-an-old-tip record is stale: after a failed-review fix moves the tip, verify re-arms and the §10.2 chain re-runs', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'rehearsal.out');
@@ -288,7 +365,7 @@ test('a done-at-an-old-tip record is stale: after a failed-review fix moves the 
   assert.equal(st.next.step, 'push', 'the release commit is the designed exemption — the chain stays current');
 });
 
-test('arm refuses on a failed precondition without writing; record refuses without an arm at the same sha', (t) => {
+test('arm refuses on a failed precondition without writing; record refuses without an arm at the same sha', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const before = events(fx.statePath).length;
   // rehearsal precondition: the script must exist — it does not.
@@ -311,7 +388,7 @@ test('arm refuses on a failed precondition without writing; record refuses witho
   assert.ok(!events(fx.statePath).some((e) => e.type === 'bootstrap_step'));
 });
 
-test('git-only shape (release): precondition tag_absent refuses; postcondition binds the tag to the reviewed tip', (t) => {
+test('git-only shape (release): precondition tag_absent refuses; postcondition binds the tag to the reviewed tip', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -347,7 +424,7 @@ test('git-only shape (release): precondition tag_absent refuses; postcondition b
   assert.equal(bootstrapStatus(fx.statePath).next.step, 'push');
 });
 
-test('gh-network shape (ci_wait): precondition remote_tag_equals_local; postcondition needs both job conclusions', (t) => {
+test('gh-network shape (ci_wait): precondition remote_tag_equals_local; postcondition needs both job conclusions', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   // Seed the ledger up to push through the driver (git-only steps), then exercise ci_wait.
   addRehearsalScript(fx);
@@ -375,7 +452,7 @@ test('gh-network shape (ci_wait): precondition remote_tag_equals_local; postcond
   const fx2 = fx; void fx2;
 });
 
-test('filesystem-install shape (install_pi): precondition ci_wait_done + the workspace scan; postcondition reads the fixture install root', (t) => {
+test('filesystem-install shape (install_pi): precondition ci_wait_done + the workspace scan; postcondition reads the fixture install root', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -410,7 +487,7 @@ test('filesystem-install shape (install_pi): precondition ci_wait_done + the wor
   assert.equal(bootstrapStatus(fx.statePath).next.step, 'main_push');
 });
 
-test('start opens exactly the next corrective pass, only after pass 1 reached surfaces_live and only from a corrective finding', (t) => {
+test('start opens exactly the next corrective pass, only after pass 1 reached surfaces_live and only from a corrective finding', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   appendEvent(fx.statePath, { type: 'goal_check', ts: 1, verdict: 'partial' }); // index 0: stale (before surfaces_live)
   // pass 1 not complete → refused
@@ -465,7 +542,7 @@ test('start opens exactly the next corrective pass, only after pass 1 reached su
   assert.deepEqual(priorVersions(events(fx.statePath)), ['10.0.1'], 'seeded pass 1 armed no release; pass 2 bound 10.0.1');
 });
 
-test('a recovered step counts as done for its successors; a recovered record needs exit 0', (t) => {
+test('a recovered step counts as done for its successors; a recovered record needs exit 0', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -480,7 +557,7 @@ test('a recovered step counts as done for its successors; a recovered record nee
   assert.equal(review.ok, true, JSON.stringify(review));
 });
 
-test('arm binds the branch tip and the target set; the gate binds the remote tip instead of HEAD', (t) => {
+test('arm binds the branch tip and the target set; the gate binds the remote tip instead of HEAD', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -505,7 +582,7 @@ test('arm binds the branch tip and the target set; the gate binds the remote tip
   assert.equal(typeof armedEvent.targets_sha256, 'string');
 });
 
-test('targets digest binds nested keys; carried reports come from the arm, not the caller', (t) => {
+test('targets digest binds nested keys; carried reports come from the arm, not the caller', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const a = resolveTargets(fx.MAIN, { slug: fx.slug }, fx.targets);
   const b = resolveTargets(fx.MAIN, { slug: fx.slug }, { ...fx.targets, workspace_roots: [{ dir: '/elsewhere', depth: 9 }] });
@@ -545,7 +622,7 @@ test('targets digest binds nested keys; carried reports come from the arm, not t
   assert.equal(rec.data.main_pre_bootstrap, git(fx.MAIN, 'rev-parse', 'main'));
 });
 
-test('gate: MAIN must have main checked out; the record needs local main rebased onto the remote tip', (t) => {
+test('gate: MAIN must have main checked out; the record needs local main rebased onto the remote tip', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   // Seed pass 1 through surfaces_live and a pr_merge record naming the remote tip as the merge sha.
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge'].includes(s))) {
@@ -582,7 +659,7 @@ test('gate: MAIN must have main checked out; the record needs local main rebased
   assert.equal(git(fx.MAIN, 'merge-base', 'origin/main', 'main'), mergeSha, 'local main now sits on the remote tip');
 });
 
-test('workspace scan lists non-archived bundles up to the depth and flags the hook-policy repo', (t) => {
+test('workspace scan lists non-archived bundles up to the depth and flags the hook-policy repo', { concurrency: true }, async (t) => {
   const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-scan-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   writeState(path.join(root, 'a', 'docs', 'masterplan', 's1', 'state.yml'), { schema_version: 8, slug: 's1', status: 'in-progress', phase: 'execute', tasks: [] });
@@ -598,7 +675,7 @@ test('workspace scan lists non-archived bundles up to the depth and flags the ho
   assert.equal(deep.find((b) => b.slug === 's1').hook_policy, false);
 });
 
-test('a linked worktree target must be the branch tip and clean; quoted commands survive a path with a space', (t) => {
+test('a linked worktree target must be the branch tip and clean; quoted commands survive a path with a space', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const wt = fx.worktree;
   addRehearsalScript(fx);
@@ -634,7 +711,7 @@ test('a linked worktree target must be the branch tip and clean; quoted commands
   assert.equal(rec.data.tip, fx.tip);
 });
 
-test('without a linked worktree, MAIN itself must be the branch at the tip', (t) => {
+test('without a linked worktree, MAIN itself must be the branch at the tip', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   git(fx.MAIN, 'worktree', 'remove', '--force', fx.worktree);
@@ -651,7 +728,7 @@ test('without a linked worktree, MAIN itself must be the branch at the tip', (t)
   recordStep({ statePath: fx.statePath, step: 'rehearsal', exit: 0, digestFile: digest, targets });
 });
 
-test('the rehearsal targets file is bound: an edit after the arm is refused', (t) => {
+test('the rehearsal targets file is bound: an edit after the arm is refused', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -665,7 +742,7 @@ test('the rehearsal targets file is bound: an edit after the arm is refused', (t
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'rehearsal', exit: 0, digestFile: digest, targets: fx.targets }), /targets file .* no longer matches/);
 });
 
-test('pr_merge: the merge must land on the remote base observed at arm', (t) => {
+test('pr_merge: the merge must land on the remote base observed at arm', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip } : step === 'main_push' ? { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } : {} });
@@ -688,7 +765,7 @@ test('pr_merge: the merge must land on the remote base observed at arm', (t) => 
   assert.ok(!events(fx.statePath).some((e) => e.type === 'bootstrap_step' && e.step === 'pr_merge'));
 });
 
-test('pr_merge: the merge must be exactly [armed base, armed tip] — an extra commit under another ref is refused', (t) => {
+test('pr_merge: the merge must be exactly [armed base, armed tip] — an extra commit under another ref is refused', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip } : step === 'main_push' ? { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } : {} });
@@ -719,7 +796,7 @@ test('pr_merge: the merge must be exactly [armed base, armed tip] — an extra c
   assert.equal(rec.data.merge_sha, good);
 });
 
-test('gate: a branch commit that wrote and then reverted a bundle path is still refused', (t) => {
+test('gate: a branch commit that wrote and then reverted a bundle path is still refused', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   write(fx.worktree, 'docs/masterplan/other/state.yml', 'slug: other\n');
   git(fx.worktree, 'add', '-A'); git(fx.worktree, 'commit', '-q', '-m', 'bundle write on the branch');
@@ -743,7 +820,7 @@ test('gate: a branch commit that wrote and then reverted a bundle path is still 
   assert.ok(armed.preconditions.some((p) => p.name === 'no_bundle_diff' && !p.ok), JSON.stringify(armed.preconditions));
 });
 
-test('release recorded in MAIN itself: the release commit moves MAIN HEAD and is accepted', (t) => {
+test('release recorded in MAIN itself: the release commit moves MAIN HEAD and is accepted', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   git(fx.MAIN, 'worktree', 'remove', '--force', fx.worktree);
@@ -768,7 +845,7 @@ test('release recorded in MAIN itself: the release commit moves MAIN HEAD and is
   assert.equal(git(fx.MAIN, 'rev-parse', 'v10.0.0^{commit}'), git(fx.MAIN, 'rev-parse', 'HEAD'));
 });
 
-test('the gh target is data: shell syntax in it is never executed and reports unavailable', (t) => {
+test('the gh target is data: shell syntax in it is never executed and reports unavailable', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess', 'release']) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -786,7 +863,7 @@ test('the gh target is data: shell syntax in it is never executed and reports un
   assert.equal(armStep({ statePath: fx.statePath, step: 'ci_wait', targets: { ...fx.targets, gh: 'sh' } }).preconditions.find((p) => p.name === 'gh_available').ok, true, 'a bare name resolves on PATH');
 });
 
-test('gate: a dirty file in ANOTHER bundle is not tolerated', (t) => {
+test('gate: a dirty file in ANOTHER bundle is not tolerated', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -808,7 +885,7 @@ test('gate: a dirty file in ANOTHER bundle is not tolerated', (t) => {
   assert.equal(armed.ok, true, JSON.stringify(armed));
 });
 
-test('a record is refused when the execution tree is dirty after the arm', (t) => {
+test('a record is refused when the execution tree is dirty after the arm', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -821,7 +898,7 @@ test('a record is refused when the execution tree is dirty after the arm', (t) =
   assert.equal(recordStep({ statePath: fx.statePath, step: 'verify', exit: 0, targets: fx.targets }).status, 'done');
 });
 
-test('gate: the record needs a fresh fetch and the armed ledger committed by the printed command', (t) => {
+test('gate: the record needs a fresh fetch and the armed ledger committed by the printed command', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -850,7 +927,7 @@ test('gate: the record needs a fresh fetch and the armed ledger committed by the
   assert.equal(recordStep({ statePath: fx.statePath, step: 'gate', exit: 0, targets: fx.targets }).status, 'done');
 });
 
-test('a gh target must be an executable file', (t) => {
+test('a gh target must be an executable file', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess', 'release']) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -866,7 +943,7 @@ test('a gh target must be an executable file', (t) => {
   assert.equal(pre(fx.targets.gh), true);
 });
 
-test('every printed command is valid shell (docs_normalize included)', (t) => {
+test('every printed command is valid shell (docs_normalize included)', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -878,7 +955,7 @@ test('every printed command is valid shell (docs_normalize included)', (t) => {
   assert.match(r.stdout, /docs normalized/);
 });
 
-test('push: a tag retargeted after the arm is refused; the receipt binds tag object, peeled commit and branch', (t) => {
+test('push: a tag retargeted after the arm is refused; the receipt binds tag object, peeled commit and branch', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess', 'release']) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -894,7 +971,7 @@ test('push: a tag retargeted after the arm is refused; the receipt binds tag obj
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'push', exit: 0, targets: fx.targets }), /tag_unchanged_since_arm/);
 });
 
-test('main_push: a local main that moved after the arm is refused (the carried report is stale)', (t) => {
+test('main_push: a local main that moved after the arm is refused (the carried report is stale)', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'publish_ack', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -909,7 +986,7 @@ test('main_push: a local main that moved after the arm is refused (the carried r
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'main_push', exit: 0, targets: fx.targets }), /base moved since arm|main_unchanged_since_arm/);
 });
 
-test('assess refuses an empty assessment', (t) => {
+test('assess refuses an empty assessment', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -920,7 +997,7 @@ test('assess refuses an empty assessment', (t) => {
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'assess', exit: 0, data: { intent_verdict: { verdict: 'met', evidence: '' } }, targets: fx.targets }), /intent_verdict_evidence/);
 });
 
-test('gate: a dirty non-bundle file after the command refuses the record', (t) => {
+test('gate: a dirty non-bundle file after the command refuses the record', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -942,7 +1019,7 @@ test('gate: a dirty non-bundle file after the command refuses the record', (t) =
   assert.equal(recordStep({ statePath: fx.statePath, step: 'gate', exit: 0, targets: fx.targets }).status, 'done');
 });
 
-test('a rework review verdict is a blocking finding; sibling-bundle dirt blocks a no-worktree arm', (t) => {
+test('a rework review verdict is a blocking finding; sibling-bundle dirt blocks a no-worktree arm', { concurrency: true }, async (t) => {
   assert.equal(isBlockingFinding({ type: 'adversary_review', final_verdict: 'rework' }), true);
   assert.equal(isBlockingFinding({ type: 'adversary_review', final_verdict: 'approve' }), false);
   // types that denote the failure block by themselves, without any redundant verdict field
@@ -964,7 +1041,7 @@ test('a rework review verdict is a blocking finding; sibling-bundle dirt blocks 
   assert.ok(armed.preconditions.some((p) => (p.name === 'clean_tree' || p.name === 'worktree_clean') && !p.ok && /other\/note/.test(p.detail)), JSON.stringify(armed.preconditions));
 });
 
-test('release: a tag without the release commit is refused; a replay with the header present is accepted', (t) => {
+test('release: a tag without the release commit is refused; a replay with the header present is accepted', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -990,7 +1067,7 @@ test('release: a tag without the release commit is refused; a replay with the he
   assert.equal(recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets }).status, 'done');
 });
 
-test('gate: an overridden or unresolvable branch cannot dodge the audits', (t) => {
+test('gate: an overridden or unresolvable branch cannot dodge the audits', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -1016,7 +1093,7 @@ test('gate: an overridden or unresolvable branch cannot dodge the audits', (t) =
   assert.equal(armed.ok, true, JSON.stringify(armed));
 });
 
-test('a blocking finding after surfaces_live blocks the gate (arm and record) until a corrective pass consumes it; a recorded gate closes the run', (t) => {
+test('a blocking finding after surfaces_live blocks the gate (arm and record) until a corrective pass consumes it; a recorded gate closes the run', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   // pass 1 through pr_merge for real enough that the gate's own preconditions pass
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'surfaces_live'].includes(s))) {
@@ -1068,7 +1145,7 @@ test('a blocking finding after surfaces_live blocks the gate (arm and record) un
   assert.throws(() => startPass({ statePath: fx.statePath, pass: 3, triggeredBy: events(fx.statePath).length - 1, version: '10.0.2' }), /gate is already recorded/);
 });
 
-test('gh commands are anchored to MAIN: run from another repository, gh still sees MAIN', (t) => {
+test('gh commands are anchored to MAIN: run from another repository, gh still sees MAIN', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const cwdFile = path.join(fx.tmp, 'gh.cwd');
   fs.writeFileSync(fx.targets.gh, `#!/bin/sh\npwd >> ${cwdFile}\necho "$@" >> ${path.join(fx.tmp, 'gh.log')}\nexit 0\n`);
@@ -1096,7 +1173,7 @@ test('gh commands are anchored to MAIN: run from another repository, gh still se
   assert.equal(ci.data.gh_repo, 'fixture/repo', 'the arm binds the repository');
 });
 
-test('the GitHub repository is the configured remote\'s, never the checkout\'s default: derived from the URL or refused', (t) => {
+test('the GitHub repository is the configured remote\'s, never the checkout\'s default: derived from the URL or refused', { concurrency: true }, async (t) => {
   assert.equal(ghRepoFromRemoteUrl('git@github.com:acme/staging.git'), 'acme/staging');
   assert.equal(ghRepoFromRemoteUrl('https://github.com/acme/prod'), 'acme/prod');
   assert.equal(ghRepoFromRemoteUrl('https://github.com/acme/prod.git/'), 'acme/prod');
@@ -1124,7 +1201,7 @@ test('the GitHub repository is the configured remote\'s, never the checkout\'s d
   assert.match(armed.cmd, /--repo 'fixture\/repo'/);
 });
 
-test('pr_merge is recoverable after `pr create` succeeded and the merge failed: the retry finds the PR and merges by number', (t) => {
+test('pr_merge is recoverable after `pr create` succeeded and the merge failed: the retry finds the PR and merges by number', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip } : step === 'main_push' ? { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } : {} });
@@ -1167,7 +1244,7 @@ exit 0
   assert.equal(rec.status, 'recovered');
 });
 
-test('push is atomic and authorised against the remote refs: a tag that appeared after the arm fails the whole push, publishing nothing', (t) => {
+test('push is atomic and authorised against the remote refs: a tag that appeared after the arm fails the whole push, publishing nothing', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1201,7 +1278,7 @@ test('push is atomic and authorised against the remote refs: a tag that appeared
   assert.equal(armed.ok, true, JSON.stringify(armed));
 });
 
-test('push publishes the ARMED objects: local refs retargeted after the arm never reach the remote', (t) => {
+test('push publishes the ARMED objects: local refs retargeted after the arm never reach the remote', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1226,7 +1303,7 @@ test('push publishes the ARMED objects: local refs retargeted after the arm neve
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'push', exit: 0, targets: fx.targets }), /tag_unchanged_since_arm|tip/);
 });
 
-test('main_push publishes the armed main_sha: a commit that lands on main after the arm is not pushed', (t) => {
+test('main_push publishes the armed main_sha: a commit that lands on main after the arm is not pushed', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'publish_ack', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip } } : {}) });
@@ -1243,7 +1320,7 @@ test('main_push publishes the armed main_sha: a commit that lands on main after 
   assert.throws(() => recordStep({ statePath: fx.statePath, step: 'main_push', exit: 0, targets: fx.targets }), /base moved since arm|main_unchanged_since_arm/);
 });
 
-test('pr_merge: a remote head that is not the armed tip is refused at the arm', (t) => {
+test('pr_merge: a remote head that is not the armed tip is refused at the arm', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip } : step === 'main_push' ? { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } : {} });
@@ -1288,7 +1365,7 @@ function prMerge(fx, pass) {
   return mergeSha;
 }
 
-test('end to end: pass 1 publishes 10.0.0, a blocking finding opens pass 2, and 10.0.1 walks every real step to the gate', (t) => {
+test('end to end: pass 1 publishes 10.0.0, a blocking finding opens pass 2, and 10.0.1 walks every real step to the gate', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1343,7 +1420,7 @@ test('end to end: pass 1 publishes 10.0.0, a blocking finding opens pass 2, and 
 });
 
 
-test('release refuses a tag that already exists on the remote, writing nothing', (t) => {
+test('release refuses a tag that already exists on the remote, writing nothing', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1365,7 +1442,7 @@ test('release refuses a tag that already exists on the remote, writing nothing',
   release(fx);
 });
 
-test('after the push, every step is bound to the published tip: a branch that moves is refused', (t) => {
+test('after the push, every step is bound to the published tip: a branch that moves is refused', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1422,7 +1499,7 @@ test('after the push, every step is bound to the published tip: a branch that mo
   assert.equal(restored.ok, true, JSON.stringify(restored));
 });
 
-test('the gate audits the merged PR range and rebases onto the armed object, not a repointable ref', (t) => {
+test('the gate audits the merged PR range and rebases onto the armed object, not a repointable ref', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   // a branch commit that writes into the bundle and reverts it (net-clean, still a branch-path write)
   write(fx.worktree, 'docs/masterplan/bs/sneak.txt', 'x\n');
@@ -1476,7 +1553,7 @@ test('the gate audits the merged PR range and rebases onto the armed object, not
   assert.ok(!git(fx2.MAIN, 'log', '--format=%H', '-n', '20', 'main').split('\n').includes(injected), 'the substituted commit did not enter main');
 });
 
-test('a tag retargeted after the push blocks every tag consumer, even at the same version', (t) => {
+test('a tag retargeted after the push blocks every tag consumer, even at the same version', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1516,7 +1593,7 @@ test('a tag retargeted after the push blocks every tag consumer, even at the sam
   assert.equal(armStep({ statePath: fx.statePath, step: 'install_pi', targets: fx.targets }).ok, true);
 });
 
-test('a tag moved between the arm and the record cannot be recorded, and the commands never name the tag', (t) => {
+test('a tag moved between the arm and the record cannot be recorded, and the commands never name the tag', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -1555,7 +1632,7 @@ test('a tag moved between the arm and the record cannot be recorded, and the com
   assert.equal(recordStep({ statePath: fx.statePath, step: 'install_pi', exit: 0, targets: fx.targets }).status, 'done');
 });
 
-test('a second blocking finding is not stranded: the corrective pass consumes every open finding', (t) => {
+test('a second blocking finding is not stranded: the corrective pass consumes every open finding', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => s !== 'gate')) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip, published_tag: 'x' } } : step === 'main_push' ? { data: { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } } : {}) });
@@ -1576,7 +1653,7 @@ test('a second blocking finding is not stranded: the corrective pass consumes ev
   assert.equal(openCorrectiveFindings(events(fx.statePath), 2).length, 1);
 });
 
-test('pass 1 pr_merge binds the base to the main that main_push published', (t) => {
+test('pass 1 pr_merge binds the base to the main that main_push published', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : step === 'main_push' ? { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } : {} });
@@ -1598,7 +1675,7 @@ test('pass 1 pr_merge binds the base to the main that main_push published', (t) 
   assert.ok(armed.preconditions.some((p) => p.name === 'remote_main_expected' && !p.ok), JSON.stringify(armed));
 });
 
-test('the FIRST pr_merge of a run whose pass 1 died before step 5 binds the base to the CURRENT pass main_push', (t) => {
+test('the FIRST pr_merge of a run whose pass 1 died before step 5 binds the base to the CURRENT pass main_push', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const targets2 = { ...fx.targets, version: '10.0.1' };
   // Pass 1 died at ci_wait: everything through push done, the ci_wait failed, the corrective
@@ -1631,7 +1708,7 @@ test('the FIRST pr_merge of a run whose pass 1 died before step 5 binds the base
   assert.ok(armed.preconditions.some((p) => p.name === 'remote_main_expected' && p.ok), JSON.stringify(armed));
 });
 
-test('a later pass whose main_push is OMITTED (a prior pass completed it) still finds the pr_merge base', (t) => {
+test('a later pass whose main_push is OMITTED (a prior pass completed it) still finds the pr_merge base', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   const targets2 = { ...fx.targets, version: '10.0.1' };
   // Pass 1 died at ci_wait; pass 2 carried the first main_push (done) and died before pr_merge.
@@ -1679,7 +1756,7 @@ test('a later pass whose main_push is OMITTED (a prior pass completed it) still 
   assert.ok(pre.detail.includes('vs expected'), `the base detail names the expected base: ${pre.detail}`);
 });
 
-test('a forged main_sha on the main_push record is replaced by the armed one', (t) => {
+test('a forged main_sha on the main_push record is replaced by the armed one', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {} });
@@ -1745,7 +1822,7 @@ function pass4Shape(t, { extra = () => {} } = {}) {
   return fx;
 }
 
-test('record-refusal: refuses when the step does not currently refuse; writes the typed event with live evidence', (t) => {
+test('record-refusal: refuses when the step does not currently refuse; writes the typed event with live evidence', { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   // pr_merge currently REFUSES on tip_is_published once the branch moves past the published tip —
   // the panel's exact precondition shape. Move the branch first.
@@ -1811,7 +1888,7 @@ test('record-refusal: refuses when the step does not currently refuse; writes th
   assert.ok(CORRECTIVE_TRIGGERS.includes('bootstrap_refusal'));
 });
 
-test('the pass-5 opening contract: a recorded refusal opens the corrective pass over the ACTUAL pass-4 shape; the replay validator accepts it', (t) => {
+test('the pass-5 opening contract: a recorded refusal opens the corrective pass over the ACTUAL pass-4 shape; the replay validator accepts it', { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   write(fx.worktree, 'src/driver-fix.txt', 'fix\n');
   git(fx.worktree, 'add', '-A'); git(fx.worktree, 'commit', '-q', '-m', 'driver fix past the tag');
@@ -1837,7 +1914,7 @@ test('the pass-5 opening contract: a recorded refusal opens the corrective pass 
   assert.throws(() => startPass({ statePath: fx.statePath, pass: 6, triggeredBy: refusalIdx, version: '10.0.5' }), /already bound to pass 5|not complete through surfaces_live|already opened/);
 });
 
-test('pass-5 opening negatives: pre-push refusal, foreign-pass refusal, post-gate refusal, non-post-push missing steps', (t) => {
+test('pass-5 opening negatives: pre-push refusal, foreign-pass refusal, post-gate refusal, non-post-push missing steps', { concurrency: true }, async (t) => {
   // (a) a refusal recorded BEFORE the pass's successful push is not causally after publication
   const fxA = pass4Shape(t);
   {
@@ -1904,7 +1981,7 @@ test('pass-5 opening negatives: pre-push refusal, foreign-pass refusal, post-gat
   }
 });
 
-test('reconcile-advance: a doc-only advance is accepted and becomes pr_merge\'s expected base; anything else is the foreign-commit row', (t) => {
+test('reconcile-advance: a doc-only advance is accepted and becomes pr_merge\'s expected base; anything else is the foreign-commit row', { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   const mainSha = git(fx.MAIN, 'rev-parse', 'main');
   // someone (the operator's handoff commit) pushes a doc-only commit to origin/main
@@ -1979,7 +2056,7 @@ test('reconcile-advance: a doc-only advance is accepted and becomes pr_merge\'s 
   }
 });
 
-test('fix round: reconcile-advance refuses empty, non-doc-only, and rewritten advances — the operator-authorized boundary is enforced, not implied', (t) => {
+test('fix round: reconcile-advance refuses empty, non-doc-only, and rewritten advances — the operator-authorized boundary is enforced, not implied', { concurrency: true }, async (t) => {
   const mk = (mkCommit, ...pushArgs) => {
     const fxN = pass4Shape(t);
     const c = path.join(fxN.tmp, `cfx-${Math.random().toString(36).slice(2, 8)}`);
@@ -2010,7 +2087,7 @@ test('fix round: reconcile-advance refuses empty, non-doc-only, and rewritten ad
   }
 });
 
-test("fix round: recordedMainMover is reconciliation-aware — sequential doc advances reconcile and record-refusal evidence cannot diverge from pr_merge's expected", (t) => {
+test("fix round: recordedMainMover is reconciliation-aware — sequential doc advances reconcile and record-refusal evidence cannot diverge from pr_merge's expected", { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   const moverSha = git(fx.MAIN, 'rev-parse', 'main');
   // the branch moves past the published tip first — the panel's exact precondition shape, so
@@ -2056,7 +2133,7 @@ test("fix round: recordedMainMover is reconciliation-aware — sequential doc ad
   assert.throws(() => reconcileAdvance({ statePath: fx.statePath, sha: shaR, targets: fx.targets }), /is not an ancestor .* rewrite is not an advance/);
 });
 
-test("fix round: correct-receipt CLI parse refuses malformed target lists whole — no silent drops, no Number('')===0", (t) => {
+test("fix round: correct-receipt CLI parse refuses malformed target lists whole — no silent drops, no Number('')===0", { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   const script = path.resolve('scripts/bootstrap-v10.mjs');
   const run = (ct) => spawnSync(process.execPath, [script, 'correct-receipt', `--state=${fx.statePath}`, `--correction-targets=${ct}`, '--note=probe'], { encoding: 'utf8' });
@@ -2072,7 +2149,7 @@ test("fix round: correct-receipt CLI parse refuses malformed target lists whole 
   assert.deepEqual(ev.targets, [3, 5]);
 });
 
-test('isBlockingFinding: data.verdict carries machine-readable blocking verdicts; non-blocking ones stay non-blocking', () => {
+test('isBlockingFinding: data.verdict carries machine-readable blocking verdicts; non-blocking ones stay non-blocking', { concurrency: true }, async () => {
   const blocking = { type: 'adversary_review', data: { sha: 'a', verdict: 'revise' } };
   const rework = { type: 'adversary_review', data: { sha: 'a', verdict: 'rework' } };
   const reject = { type: 'adversary_review', data: { sha: 'a', verdict: 'reject' } };
@@ -2086,7 +2163,7 @@ test('isBlockingFinding: data.verdict carries machine-readable blocking verdicts
   assert.equal(isBlockingFinding({ type: 'adversary_review', data: 'not-an-object' }), false, 'a non-object data is ignored');
 });
 
-test('gate: the audit anchor resolves from a LATE first main_push (pass 4), a foreign source commit refuses BEFORE the rebase, a missing anchor refuses', (t) => {
+test('gate: the audit anchor resolves from a LATE first main_push (pass 4), a foreign source commit refuses BEFORE the rebase, a missing anchor refuses', { concurrency: true }, async (t) => {
   // The walk's actual shape: pass 1 died at ci_wait; pass 4 completed main_push. The gate
   // must audit from pass 4's main_pre_bootstrap, not pass 1's (which does not exist).
   const fx = pass4Shape(t);
@@ -2133,7 +2210,7 @@ test('gate: the audit anchor resolves from a LATE first main_push (pass 4), a fo
   assert.ok(armed2.preconditions.some((p) => p.name === 'main_push_anchor' && !p.ok), 'a missing anchor REFUSES the gate — the audit is never silently skipped');
 });
 
-test('gate: the pass-4-anchored audit accepts a permitted BUNDLE commit and completes the corrective walk through the gate', (t) => {
+test('gate: the pass-4-anchored audit accepts a permitted BUNDLE commit and completes the corrective walk through the gate', { concurrency: true }, async (t) => {
   // the end-to-end completion of the pass-4 shape: bundle-only local commits replay through
   // the rebase, and the gate records on pass 4 (the late-first-main_push identity held).
   const fx = pass4Shape(t);
@@ -2158,7 +2235,7 @@ test('gate: the pass-4-anchored audit accepts a permitted BUNDLE commit and comp
   assert.equal(git(fx.MAIN, 'merge-base', 'origin/main', 'main'), mergeSha, 'local main sits on the remote tip');
 });
 
-test('ci_wait: the printed cmd captures the pipeline\'s TRUE exit — red stays 123 (xargs), green stays 0, never translated to 1', (t) => {
+test('ci_wait: the printed cmd captures the pipeline\'s TRUE exit — red stays 123 (xargs), green stays 0, never translated to 1', { concurrency: true }, async (t) => {
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
@@ -2202,7 +2279,7 @@ exit 0
   assert.match(armed.cmd, /xargs .* run watch --repo/);
 });
 
-test('correct-receipt: appends the typed disclosure against real historical indexes; targets never rewritten', (t) => {
+test('correct-receipt: appends the typed disclosure against real historical indexes; targets never rewritten', { concurrency: true }, async (t) => {
   const fx = pass4Shape(t);
   const before = events(fx.statePath);
   const targetIdx = before.length - 1;
@@ -2220,7 +2297,7 @@ test('correct-receipt: appends the typed disclosure against real historical inde
   assert.equal(events(fx.statePath).length, n, 'refusals write nothing');
 });
 
-test("surfaces_live probe: surfaceExecVersion anchors on the documented CC-2 banner (the shipped regex expected a form that never existed)", () => {
+test("surfaces_live probe: surfaceExecVersion anchors on the documented CC-2 banner (the shipped regex expected a form that never existed)", { concurrency: true }, async () => {
   // the REAL entry point prints formatBanner's exact form — the lone CC-2/CC-3 survivor
   const banner = "→ /masterplan v10.0.5 args: '(empty)' cwd: /srv/dev/ras/masterplan";
   const withArgs = "→ /masterplan v10.0.6 args: 'status docs/masterplan/x' cwd: /tmp";
@@ -2242,4 +2319,5 @@ test("surfaces_live probe: surfaceExecVersion anchors on the documented CC-2 ban
   assert.equal(surfaceExecVersion(mk(out(pathOnly))), null, 'a path-only output is not a version');
   assert.equal(surfaceExecVersion(mk('process.exit(3)')), null, 'a dying entry point is not a version');
   fs.rmSync(tmp, { recursive: true, force: true });
+});
 });

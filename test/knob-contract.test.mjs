@@ -329,9 +329,14 @@ function run(args, opts = {}) {
 }
 // Build a repo with a .masterplan.yaml carrying the given config spec, plus a linked worktree
 // and a bare origin (for the autonomy walk). Returns ready artifacts.
-function buildRepo({ configYaml, slug = 'knob' }) {
-  const tmp = tmpdir('mp-knob-');
-  const MAIN = path.join(tmp, 'main');
+// The seed commit (and the plain README commit used by several contracts) is identical
+// across calls, so each test copies a pristine template instead of re-running git init.
+let SEED_REPO_TEMPLATE = null;
+function seedRepoTemplate() {
+  if (SEED_REPO_TEMPLATE) return SEED_REPO_TEMPLATE;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-knob-seed-template-'));
+  FIXTURE_TMPDIRS.push(dir);
+  const MAIN = path.join(dir, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
   git(MAIN, 'config', 'user.email', 'test@test');
@@ -341,6 +346,36 @@ function buildRepo({ configYaml, slug = 'knob' }) {
   write(MAIN, '.gitignore', '.worktrees/\n');
   git(MAIN, 'add', '.');
   git(MAIN, 'commit', '-q', '-m', 'initial');
+  SEED_REPO_TEMPLATE = MAIN;
+  return MAIN;
+}
+let PLAIN_REPO_TEMPLATE = null;
+function plainRepoTemplate() {
+  if (PLAIN_REPO_TEMPLATE) return PLAIN_REPO_TEMPLATE;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-knob-plain-template-'));
+  FIXTURE_TMPDIRS.push(dir);
+  const MAIN = path.join(dir, 'main');
+  fs.mkdirSync(MAIN, { recursive: true });
+  git(MAIN, 'init', '--initial-branch=main');
+  git(MAIN, 'config', 'user.email', 't@t');
+  git(MAIN, 'config', 'user.name', 't');
+  git(MAIN, 'config', 'commit.gpgsign', 'false');
+  write(MAIN, 'README.md', '# r\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'init');
+  PLAIN_REPO_TEMPLATE = MAIN;
+  return MAIN;
+}
+// A normal repo (no worktree, no absolute remote) is relocatable: the copy is a fresh
+// isolated directory and does not share the template's object writes.
+function copyGitRepo(templateMain, destMain) {
+  fs.mkdirSync(path.dirname(destMain), { recursive: true });
+  fs.cpSync(templateMain, destMain, { recursive: true });
+}
+function buildRepo({ configYaml, slug = 'knob' }) {
+  const tmp = tmpdir('mp-knob-');
+  const MAIN = path.join(tmp, 'main');
+  copyGitRepo(seedRepoTemplate(), MAIN);
   if (configYaml !== undefined && configYaml !== null) {
     write(MAIN, '.masterplan.yaml', configYaml);
     git(MAIN, 'add', '.masterplan.yaml');
@@ -673,14 +708,7 @@ async function buildFixture(entry, spec, tag) {
     // value), never a seeded echo.
     const dir = tmpdir('mp-knob-rev-');
     const MAIN = path.join(dir, 'main');
-    fs.mkdirSync(MAIN, { recursive: true });
-    git(MAIN, 'init', '--initial-branch=main');
-    git(MAIN, 'config', 'user.email', 't@t');
-    git(MAIN, 'config', 'user.name', 't');
-    git(MAIN, 'config', 'commit.gpgsign', 'false');
-    write(MAIN, 'README.md', '# r\n');
-    git(MAIN, 'add', '.');
-    git(MAIN, 'commit', '-q', '-m', 'init');
+    copyGitRepo(plainRepoTemplate(), MAIN);
     const WT = path.join(MAIN, '.worktrees', 'knob');
     git(MAIN, 'worktree', 'add', '-q', '-b', 'masterplan/knob', WT);
     write(WT, 'a.txt', 'A\n');
@@ -806,14 +834,7 @@ async function buildFixture(entry, spec, tag) {
     // dispatch is the consumer-side observable of the fabric knob.
     const dir = tmpdir('mp-knob-fabric-');
     const MAIN = path.join(dir, 'main');
-    fs.mkdirSync(MAIN, { recursive: true });
-    git(MAIN, 'init', '--initial-branch=main');
-    git(MAIN, 'config', 'user.email', 't@t');
-    git(MAIN, 'config', 'user.name', 't');
-    git(MAIN, 'config', 'commit.gpgsign', 'false');
-    write(MAIN, 'README.md', '# r\n');
-    git(MAIN, 'add', '.');
-    git(MAIN, 'commit', '-q', '-m', 'init');
+    copyGitRepo(plainRepoTemplate(), MAIN);
     const WT = path.join(MAIN, '.worktrees', 'knob');
     git(MAIN, 'worktree', 'add', '-q', '-b', 'masterplan/knob', WT);
     write(WT, 'a.txt', 'A\n');
@@ -941,14 +962,7 @@ async function buildFixture(entry, spec, tag) {
     const { readState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const dir = tmpdir('mp-knob-state-');
     const MAIN = path.join(dir, 'main');
-    fs.mkdirSync(MAIN, { recursive: true });
-    git(MAIN, 'init', '--initial-branch=main');
-    git(MAIN, 'config', 'user.email', 't@t');
-    git(MAIN, 'config', 'user.name', 't');
-    git(MAIN, 'config', 'commit.gpgsign', 'false');
-    write(MAIN, 'README.md', '# r\n');
-    git(MAIN, 'add', '.');
-    git(MAIN, 'commit', '-q', '-m', 'init');
+    copyGitRepo(plainRepoTemplate(), MAIN);
     const slug = `knob${tag.toLowerCase()}`;
     const statePath = path.join(MAIN, 'docs', 'masterplan', slug, 'state.yml');
     const extra = [];
@@ -974,14 +988,7 @@ async function buildFixture(entry, spec, tag) {
     const { readState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const dir = tmpdir('mp-knob-path-');
     const MAIN = path.join(dir, 'main');
-    fs.mkdirSync(MAIN, { recursive: true });
-    git(MAIN, 'init', '--initial-branch=main');
-    git(MAIN, 'config', 'user.email', 't@t');
-    git(MAIN, 'config', 'user.name', 't');
-    git(MAIN, 'config', 'commit.gpgsign', 'false');
-    write(MAIN, 'README.md', '# r\n');
-    git(MAIN, 'add', '.');
-    git(MAIN, 'commit', '-q', '-m', 'init');
+    copyGitRepo(plainRepoTemplate(), MAIN);
     const slug = `knob${tag.toLowerCase()}`;
     const statePath = path.join(MAIN, 'docs', 'masterplan', slug, 'state.yml');
     const flag = entry.id === 'spec_path' ? '--spec-path' : entry.id === 'plan_path' ? '--plan-path' : '--plan-index-path';
@@ -1182,19 +1189,37 @@ function isExempt(id) {
 // The flag surface: every KNOWN_FLAG must resolve to a registry entry OR the generic
 // flag-registration contract. The generic contract proves the flag is REGISTERED (the CLI
 // accepts it) — the real A7 consumer-side difference.
-async function validateFlagRegistration(flag, byId) {
-  // A registry entry for this flag wins (a real behavioral contract); otherwise the generic
-  // registration contract applies: a registered flag must be accepted by the CLI (exit != 2),
-  // which is the A7 fail-closed surface.
-  const entry = byId.get(flag);
-  if (entry) return { flag, entry, via: 'registry' };
-  // Prove registration through the real binary: pass --flag to the version verb (which needs
-  // no state and runs rejectUnknownFlags before dispatch). A registered flag reaches the verb
-  // (exit 0); an unknown flag dies exit 2.
-  const r = run(['version', `--${flag}=x`], { env: mpEnv() });
-  assert.notEqual(r.status, 2,
-    `flag --${flag} is registered in KNOWN_FLAGS but the CLI rejects it as unknown (exit 2) — the registration surface is inert`);
-  return { flag, entry: null, via: 'registration' };
+// parseArgs + rejectUnknownFlags validate every flag key on one version invocation, so
+// non-registry flags are probed in batches. A batch that dies exit 2 is bisected back to
+// the individual flag; an unknown flag must still die exit 2 on its own.
+const FLAG_REGISTRATION_BATCH = 50;
+
+function versionWithFlags(flags) {
+  return run(['version', ...flags.map((flag) => `--${flag}=x`)], { env: mpEnv() });
+}
+
+function flagsRejectedAsUnknown(flags) {
+  if (flags.length === 0) return [];
+  const batch = versionWithFlags(flags);
+  if (batch.status !== 2) return [];
+  if (flags.length === 1) return flags;
+  const mid = Math.ceil(flags.length / 2);
+  return [
+    ...flagsRejectedAsUnknown(flags.slice(0, mid)),
+    ...flagsRejectedAsUnknown(flags.slice(mid)),
+  ];
+}
+
+function proveFlagRegistrations(flags) {
+  const unknown = run(['version', '--not-a-registered-knob=x'], { env: mpEnv() });
+  assert.equal(unknown.status, 2,
+    `an unknown flag must die exit 2 before dispatch, got ${unknown.status}: ${unknown.stderr || unknown.stdout}`);
+  const offenders = [];
+  for (let i = 0; i < flags.length; i += FLAG_REGISTRATION_BATCH) {
+    offenders.push(...flagsRejectedAsUnknown(flags.slice(i, i + FLAG_REGISTRATION_BATCH)));
+  }
+  assert.deepEqual(offenders, [],
+    `flags registered in KNOWN_FLAGS but the CLI rejects them as unknown (exit 2) — the registration surface is inert:\n${offenders.map((flag) => `--${flag}`).join('\n')}`);
 }
 
 test('registry: every derived non-exempt control has a contract or a registration proof', async () => {
@@ -1202,15 +1227,16 @@ test('registry: every derived non-exempt control has a contract or a registratio
   const inv = await discoverAllControls();
   const unmapped = [];
   const mapped = [];
-  // Flag surface — every KNOWN_FLAG (registration contract).
+  // Flag surface — every KNOWN_FLAG (registration contract). Registry entries keep their
+  // behavioral contract; every other non-exempt flag is accepted by one batched version probe.
+  const registrationFlags = [];
   for (const f of inv.flags) {
     if (isExempt(f)) continue;
     if (byId.has(f)) mapped.push(`flag:${f} (registry)`);
-    else {
-      await validateFlagRegistration(f, byId);
-      mapped.push(`flag:${f} (registration)`);
-    }
+    else registrationFlags.push(f);
   }
+  proveFlagRegistrations(registrationFlags);
+  for (const f of registrationFlags) mapped.push(`flag:${f} (registration)`);
   // Config surface.
   for (const c of inv.config) {
     if (isExempt(c)) continue;
