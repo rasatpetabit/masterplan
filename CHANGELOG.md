@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.6] — 2026-11-22
+
+Execution review and wave recording now measure one artifact against the frozen dispatch base
+through a single capture, refuse unbound or stale one-shot receipts before mutating bundle or
+dispatch state, and reconcile interrupted wave recordings through a write-ahead journal.
+
+### Fixed
+
+- Review and `record-result` measure the exact same candidate artifact against the frozen dispatch
+  base through one capture rather than re-capturing or drifting across steps.
+- Any reviewed-file change after review requires a fresh review on every path, including unbound
+  one-shot Phase B receipts (refused before any write unless Phase A already pinned the artifact or
+  the receipt proves the actually reviewed `diff_sha`).
+- A refused `record-result` (including read-only semantic and Git staging preflight refusals) leaves
+  `events.jsonl`, `state.yml`, and the dispatch record byte-identical.
+- A local write-ahead recording journal (`.wave-recording.json`) records the accepted batch, split
+  commit plan, and byte-checked event replay boundary so interrupted recordings reconcile safely via
+  `continue` before crash-scope reset.
+
 ## [10.2.5] — 2026-11-20
 
 Blocking execution reviews now keep unfinished tasks `pending` for rework rather than marking them
