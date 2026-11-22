@@ -233,7 +233,7 @@ import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
-import { recordWaveResult, preflightAmendedScope, promoteAmendment } from '../lib/wave-commit.mjs';
+import { recordWaveResult, preflightNativeRecording, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
@@ -4170,16 +4170,21 @@ function main() {
           die('record-result: --reviews-file must be a JSON object keyed by task_id');
         }
       }
-      // Normal Phase B review ingestion itself writes audit state. Refuse stale
-      // scope before entering it; the transaction repeats this read-only guard.
-      if (!recoverySelector) {
-        const refused = preflightAmendedScope({ statePath, result,
-          worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined });
+      const worktree = typeof flags.worktree === 'string' ? flags.worktree : undefined;
+      try {
+        const refused = preflightNativeRecording({ statePath, result, worktree, recovery: recoverySelector != null });
         if (refused) { out(refused); break; }
+      } catch (e) {
+        die(e.message);
       }
+      // Only take events emitted in-process by the review projector. A field
+      // on the workflow JSON is never authority for an append, even in recovery.
+      delete result.deferred_review_events;
+      let nativeReviewEvents = [];
       reviewNativeResult({
         host: cliDispatchHost(flags),
-        worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+        worktree,
+        onReviewEvents: (events) => { nativeReviewEvents = events; },
         statePath, self,
         result,
         providedReviews,
@@ -4210,16 +4215,14 @@ function main() {
             skillRoot: resolveInstalledSkillRoot(flags, statePath),
             self,
             now,
-            worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
-            // Recovery path only: a native-path result (or a smuggled field on the
-            // workflow JSON) must never reach recordWaveResult as deferred events.
+            worktree,
             deferredEvents: recoverySelector != null && Array.isArray(reviewedResult?.deferred_review_events)
               ? reviewedResult.deferred_review_events
-              : [],
+              : nativeReviewEvents,
             recovery: recoverySelector != null,
             recoverySelector,
           });
-          if (recRes.outcome === 'scope-amended-after-launch' || recRes.outcome === 'recovery-preservation-violation') {
+          if (recRes.outcome !== 'recorded') {
             out(recRes);
             return;
           }
@@ -4229,8 +4232,8 @@ function main() {
           // in-flight dispatch. Guard-D already serializes this writer.
           // 'recorded' observes the attempt, not task completion. A persisted
           // blocking review also ends the attempt, even if no task was accepted.
-          // Lost ownership, a stale epoch and failure-only results retain the A5
-          // pending window; none durably accepted a task or recorded review rework.
+          // Refusals leave the record untouched. Accepted failure-only results
+          // retain the A5 pending window with an audit note.
           try {
             const waveNo = Number.isInteger(reviewedResult?.wave)
               ? reviewedResult.wave
@@ -4238,7 +4241,7 @@ function main() {
             const bundleDir = path.dirname(path.resolve(statePath));
             const existing = Number.isInteger(waveNo) ? readWaveDispatchRecord(bundleDir, waveNo) : null;
             if (existing && existing.status === 'pending') {
-              if (recRes.outcome === 'recorded' && (recRes.recorded.length || recRes.review_rework?.length)) {
+              if (recRes.recorded.length || recRes.review_rework?.length) {
                 writeWaveDispatchRecord(bundleDir, waveNo, {
                   ...existing,
                   status: 'recorded',

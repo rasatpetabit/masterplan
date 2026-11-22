@@ -246,16 +246,24 @@ clean-locus baseline backfill.
 
 Masterplan does **not** own the review engine. When review is on, for every `done` task it:
 
-1. Captures the **full edit-locus working diff** (tracked + untracked; never scope-filtered).
-2. Hashes the exact payload (`payload_sha = sha256(diff bytes)`).
-3. Reuses a completed `run+task+sha` review event when one exists; otherwise runs the **native
-   review seam** — `mp record-result` phase A returns `{op:'run_native_reviews', pending_reviews:[...]}`
-   (adversary-class descriptors, breaker role with each episode's stakes/constraints), the orchestrator runs them
-   with its harness-native subagent API, and phase B re-calls `mp record-result` with
-   `--reviews-file=<task_id → review record JSON>`.
+1. Captures the **full edit-locus working diff** (tracked vs the frozen task base, plus untracked;
+   never scope-filtered). A descendant HEAD (including a bundle-only fast-forward) is reviewed
+   against the same frozen base. An alternate history with a different tree is refused before
+   requesting a review, naming both commits and how to preserve the work and recover.
+2. Hashes the exact payload (`sha256(diff bytes)`). Both phases and recording authorization use
+   the same capture; authorization rechecks the live bytes, not a prior snapshot.
+3. The **native review seam** returns `{op:'run_native_reviews', pending_reviews:[...]}` in
+   `mp record-result` phase A. Use each descriptor's `repo`, `base` and `diff_sha` to bind the
+   artifact sent to the native reviewer; never substitute a diff against moving `HEAD`.
+   Phase B re-calls `mp record-result` with `--reviews-file=<task_id → review record JSON>`.
+   Carry the `diff_sha` of the artifact actually reviewed into each record. Hosts that omit it
+   remain compatible with the first hash issued for that task in the attempt; a later Phase A
+   cannot silently rebind their receipts to new bytes. An eligible durable review can be reused
+   for the same task, episode and artifact.
 4. Projects the harness review record into a compact canonical shape
-   (`approve | rework | reject | error` + findings + harness metadata) and persists it before
-   `recordWaveResult`.
+   (`approve | rework | reject | error` + findings + harness metadata). `recordWaveResult`
+   authorizes the entire batch and appends ordinary review evidence before marking tasks done,
+   but only after the owner/epoch/scope and evidence checks pass.
 5. Records a successful digest as `done` only when the authoritative review does not
    block. A blocking review settles the dispatch attempt, not the task. The active
    marker retains the task for rework; `continue` redispatches it without resetting its
@@ -285,10 +293,9 @@ change (including a recorder state commit) can prevent a follow-up from passing 
 
 **Native path.** The wave's review requirement rides on the descriptors (`review: {adversary: true}`)
 and `review_context` is frozen into the wave-dispatch record before
-spawn. When host results arrive, `reviewNativeResult` runs the **same** `reviewCompletedTasks`
-helper (same projection + event persistence) before
-`recordWaveResult`. Every path produces identical review projections and `blocking_reviews[]`
-behavior.
+spawn. When host results arrive, `reviewNativeResult` uses `reviewCompletedTasks` to project the
+batch without appending events; the CLI passes those in-process events to `recordWaveResult`.
+Neither a refusal nor a caller-supplied `deferred_review_events` field can append to the log.
 
 ---
 

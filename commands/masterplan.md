@@ -148,8 +148,11 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
 1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
    (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
    then `mp record-result --state=<path> --result-file=<that file>`. On the native path,
-   `record-result` first runs `reviewNativeResult` (the two-phase native review seam: phase A emits `run_native_reviews` adversary descriptors for the harness to run — nothing recorded yet; phase B ingests the returned review records via `--reviews-file` through the same centralized projection) so every path produces the same canonical
-   review projection before the commit transaction.
+   phase A emits `run_native_reviews` descriptors without marking tasks done. Review the full
+   artifact for each descriptor's `repo` against its frozen `base`, and verify it matches the
+   descriptor's `diff_sha`; never recapture against moving `HEAD`. In phase B, pass the review
+   records via `--reviews-file`, carrying the SHA of the bytes actually reviewed as `diff_sha`.
+   The recorder authorizes the batch before appending review events or marking tasks done.
 
    **Committed-recovery mode** (`--recovery-repo=<path> --recovery-head=<full-40-hex-oid>`, both
    required together): an explicit opt-in path for resuming a wave whose work was already committed

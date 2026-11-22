@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import {
   composeWaveToken,
@@ -1777,6 +1778,153 @@ function crossAttemptRecord(fx, result, reviews = null, extraArgs = []) {
     [new URL('../bin/masterplan.mjs', import.meta.url).pathname, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 }
+
+function wave23Fixture() {
+  const wave = 23;
+  const tasks = [67, 68, 93].map((id, i) => ({
+    id, wave, status: 'pending',
+    files: Array.from({ length: i === 2 ? 4 : 3 }, (_, n) => `src/task-${id}-${n}.txt`),
+  }));
+  const fx = makeNativeFixture({ slug: 'wave-23', extra: { tasks, concurrency: { owner_lock: 'off' } } });
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: tasks.map((t) => planEntry(t.id, wave, t.files)) }));
+  launchNative(fx);
+  const dispatch = JSON.parse(execFileSync(process.execPath,
+    [new URL('../bin/masterplan.mjs', import.meta.url).pathname, 'dispatch-wave',
+      `--state=${fx.statePath}`, '--now=2000'], {
+      cwd: fx.WT, encoding: 'utf8', env: { ...process.env,
+        MP_DISPATCH_MAP: new URL('./fixtures/dispatch-map.json', import.meta.url).pathname },
+    }));
+  assert.equal(dispatch.outcome, 'native-spawn-plan');
+  const recordPath = path.join(fx.bundleDir, 'wave-23.dispatch.json');
+  const frozen = dispatch.record.review_context.base_sha;
+  const bundleRel = path.relative(fx.MAIN, fx.bundleDir);
+  git(fx.MAIN, 'add', '--', `${bundleRel}/state.yml`);
+  git(fx.MAIN, 'commit', '-qm', 'persist launch state');
+  git(fx.MAIN, 'add', '--', `${bundleRel}/.wave-23.watch.json`, `${bundleRel}/wave-23.dispatch.json`);
+  git(fx.MAIN, 'commit', '-qm', 'persist dispatch and watch');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  git(fx.WT, 'merge', '--ff-only', head);
+  assert.notEqual(head, frozen);
+  assert.deepEqual(git(fx.WT, 'diff', '--name-only', frozen, head).split('\n').sort(),
+    ['.wave-23.watch.json', 'state.yml', 'wave-23.dispatch.json'].map((file) => `${bundleRel}/${file}`).sort());
+  for (const task of tasks) for (const file of task.files) write(fx.WT, file, `reviewed ${file}\n`);
+  const result = { wave, tasks: tasks.map(({ id, files }) => ({
+    task_id: id, digest: { ...workerDigest(id), start_sha: frozen, files_changed: files },
+  })) };
+  const snapshot = () => ({ events: x22Events(fx), state: fs.readFileSync(fx.statePath, 'utf8'),
+    dispatch: fs.readFileSync(recordPath, 'utf8') });
+  const start = () => {
+    const phaseA = crossAttemptRecord(fx, result);
+    assert.equal(phaseA.op, 'run_native_reviews');
+    assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), tasks.map((t) => t.id));
+    return Object.fromEntries(phaseA.pending_reviews.map(({ task_id, diff_sha }) =>
+      [task_id, { ...x22Approval, diff_sha }]));
+  };
+  return { fx, tasks, result, snapshot, start, frozen, head };
+}
+
+test('wave 23 CLI: bundle-only fast-forward still records all ten reviewed files', () => {
+  const { fx, tasks, result, start, head, frozen } = wave23Fixture();
+  const reviews = start();
+  const shaAt = (base) => createHash('sha256').update(captureFullWorkingDiff(fx.WT, undefined, base)).digest('hex');
+  assert.equal(reviews[67].diff_sha, shaAt(frozen));
+  assert.notEqual(reviews[67].diff_sha, shaAt(head), 'the archived controller used this different HEAD-based digest');
+  // The incident's existing host can omit diff_sha when the pinned artifact is unchanged.
+  const out = crossAttemptRecord(fx, result, Object.fromEntries(tasks.map(({ id }) => [id, x22Approval])));
+  assert.deepEqual(out.recorded, [67, 68, 93]);
+  assert.deepEqual(out.blocking_reviews, []);
+  assert.equal(out.cleared, true);
+  assert.deepEqual(git(fx.WT, 'diff', '--name-only', head, 'HEAD').split('\n').sort(),
+    tasks.flatMap((task) => task.files).sort());
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 23).status, 'recorded');
+  const reviewEvents = x22Events(fx).trim().split('\n').map(JSON.parse)
+    .filter((event) => event.type === 'task_adversary_review');
+  assert.deepEqual(reviewEvents.map(({ data }) => [data.task, data.sha]),
+    tasks.map(({ id }) => [id, reviews[id].diff_sha]));
+});
+
+test('wave 23 CLI: an edited task file requires fresh review without changing the bundle', () => {
+  const { fx, tasks, result, snapshot, start } = wave23Fixture();
+  const reviews = start();
+  const unbound = Object.fromEntries(tasks.map(({ id }) => [id, x22Approval]));
+  write(fx.WT, tasks[0].files[0], 'not the reviewed bytes\n');
+  const before = snapshot();
+  for (const stale of [reviews, unbound]) {
+    assert.throws(() => crossAttemptRecord(fx, result, stale), /fresh review required/);
+    assert.deepEqual(snapshot(), before);
+  }
+  const refreshed = start();
+  assert.notEqual(refreshed[67].diff_sha, reviews[67].diff_sha);
+  assert.throws(() => crossAttemptRecord(fx, result, unbound), /fresh review required/,
+    'requesting a fresh review must not relabel a legacy receipt for the original bytes');
+  assert.deepEqual(snapshot(), before);
+  assert.deepEqual(crossAttemptRecord(fx, result, refreshed).recorded, [67, 68, 93]);
+});
+
+test('wave 23 CLI: stale epoch refuses without appending any review or changing the bundle', () => {
+  const { fx, result, snapshot } = wave23Fixture();
+  const state = readState(fx.statePath);
+  writeState(fx.statePath, { ...state, active_run: { ...state.active_run, epoch: 2 } });
+  const current = { ...result, epoch: 2 };
+  const phaseA = crossAttemptRecord(fx, current);
+  assert.equal(phaseA.op, 'run_native_reviews');
+  const reviews = Object.fromEntries(phaseA.pending_reviews.map(({ task_id, diff_sha }) =>
+    [task_id, { ...x22Approval, diff_sha }]));
+  const stale = { ...current, epoch: 1 };
+  const before = snapshot();
+  const outcome = crossAttemptRecord(fx, stale, reviews);
+  assert.equal(outcome.outcome, 'stale-epoch');
+  const after = snapshot();
+  assert.equal(after.events.length, before.events.length, 'refused recording changed events.jsonl');
+  assert.deepEqual(after, before);
+  assert.equal(crossAttemptRecord(fx, stale).outcome, 'stale-epoch', 'Phase A must refuse before requesting reviews');
+  assert.deepEqual(snapshot(), before);
+});
+
+test('wave 23 CLI: a late locus refusal leaves all three bundle files unchanged', () => {
+  const { fx, result, start, snapshot } = wave23Fixture();
+  const reviews = start();
+  const alias = path.join(fx.tmp, 'different-checkout');
+  git(fx.MAIN, 'worktree', 'add', '-q', '--detach', alias, 'HEAD');
+  const before = snapshot();
+  assert.throws(() => crossAttemptRecord(fx, result, reviews, [`--worktree=${alias}`]), /mutation locus mismatch/);
+  assert.deepEqual(snapshot(), before, 'refused recording changed the bundle');
+});
+
+test('wave 23 CLI: a second bundle advance between phases refuses with recovery guidance', () => {
+  const { fx, result, snapshot, start, frozen } = wave23Fixture();
+  const reviews = start();
+  const rel = path.relative(fx.MAIN, path.join(fx.bundleDir, 'wave-23.dispatch.json'));
+  git(fx.MAIN, 'add', '--', rel);
+  git(fx.MAIN, 'commit', '-qm', 'persist issued review hashes');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  git(fx.WT, 'merge', '--ff-only', head);
+  const before = snapshot();
+  assert.throws(() => crossAttemptRecord(fx, result, reviews), (err) => {
+    const message = String(err.stderr);
+    assert.ok(message.includes(head) && message.includes(frozen), message);
+    assert.match(message, /preserve.*recovery/i);
+    assert.doesNotMatch(message, /fresh review required/);
+    return true;
+  });
+  assert.deepEqual(snapshot(), before);
+});
+
+test('wave 23 CLI: alternate history with a different tree refuses before requesting reviews', () => {
+  const { fx, result, snapshot, frozen } = wave23Fixture();
+  git(fx.WT, 'add', '--', 'src/task-67-0.txt');
+  const head = git(fx.WT, 'commit-tree', git(fx.WT, 'write-tree'), '-m', 'unrelated history');
+  git(fx.WT, 'reset', '--soft', head);
+  const before = snapshot();
+  assert.throws(() => crossAttemptRecord(fx, result), (err) => {
+    const message = String(err.stderr);
+    assert.ok(message.includes(head) && message.includes(frozen), message);
+    assert.match(message, /preserve.*recovery/i);
+    return true;
+  });
+  assert.deepEqual(snapshot(), before);
+});
+
 for (const [mixed, direct] of [[false, false], [true, false], [true, true]]) {
   const route = direct ? 'direct redispatch' : 'continue';
   test(`review rework: ${mixed ? 'mixed wave' : 'all blocked'} preserves work through ${route} and re-review`, async () => {
@@ -2173,24 +2321,22 @@ test('cross-attempt: phase B retry records only B and completion retains A', asy
   const phaseA = crossAttemptRecord(fx, fx.secondResult);
   assert.equal(phaseA.op, 'run_native_reviews');
   assert.deepEqual(phaseA.pending_reviews.map((r) => r.task_id), [2]);
-  // Force a Phase B authorization refusal AFTER native ingestion, then restore
-  // the historical entry. This leaves the same durable prefix as the live bug:
-  // B's event appended, no state/code commit, current attempt still pending.
+  // Force a Phase B authorization refusal after native projection, then
+  // restore the historical entry. The blocked recording must not leave B's event.
   const saved = readWaveDispatchRecord(fx.bundleDir, 1);
   const damaged = structuredClone(saved);
   delete damaged.history[0].review_context.episodes['1'];
   writeWaveDispatchRecord(fx.bundleDir, 1, damaged);
   const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+  const beforeEvents = x22Events(fx);
   assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
     assert.equal(err.status, 2);
     assert.match(String(err.stderr), /task 1: no identifiable entry in active-episode receipt/);
     return true;
   });
   assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+  assert.equal(x22Events(fx), beforeEvents);
   writeWaveDispatchRecord(fx.bundleDir, 1, saved);
-  const beforeEvents = x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
-    .filter((e) => e.type === 'task_adversary_review');
-  assert.deepEqual(beforeEvents.map((e) => e.data.task), [1, 2]);
   assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.aCommit);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'pending');
   const second = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
@@ -2257,10 +2403,10 @@ for (const external of [true, false]) {
     const beforeA = git(fx.aRepo, 'rev-parse', 'HEAD');
     const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
     const beforeStatus = git(fx.aRepo, 'status', '--porcelain');
+    assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
     const beforeState = fs.readFileSync(fx.statePath, 'utf8');
     const beforeRecord = fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8');
     const beforeEvents = x22Events(fx);
-    assert.equal(crossAttemptRecord(fx, fx.secondResult).op, 'run_native_reviews');
     assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
       assert.equal(err.status, 2);
       assert.match(String(err.stderr), /task 1:.*repository .*src\/1\.txt.*fresh review of this task's episode is required/);
@@ -2273,10 +2419,7 @@ for (const external of [true, false]) {
     assert.equal(git(fx.aRepo, 'status', '--porcelain'), beforeStatus);
     assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
     assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8'), beforeRecord);
-    assert.ok(x22Events(fx).startsWith(beforeEvents));
-    const appended = x22Events(fx).slice(beforeEvents.length).split('\n').filter(Boolean).map(JSON.parse);
-    assert.deepEqual(appended.map((e) => [e.type, e.data?.task]), [['task_adversary_review', 2]],
-      'only Phase B ingestion appends before authorization; no recording events');
+    assert.equal(x22Events(fx), beforeEvents, 'refused Phase B appends no events');
   });
 }
 
