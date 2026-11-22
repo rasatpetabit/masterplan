@@ -8,7 +8,7 @@ tags: [masterplan, doctor, lint, validation]
 
 # Doctor structural-lint subsystem
 
-`bin/doctor.mjs` is the L4 layer of masterplan: it dispatches across 14
+`bin/doctor.mjs` is the L4 layer of masterplan: it dispatches across 23
 auto-discovered check modules in `lib/doctor/` to validate the integrity of
 an L0 run bundle (`docs/masterplan/<slug>/`). Each check module produces
 `Finding{id, severity, summary, fix}` results; `doctor` exits non-zero when

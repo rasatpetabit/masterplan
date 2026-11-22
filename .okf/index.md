@@ -35,8 +35,8 @@ bundle and resume exactly where it left off.
 | L0 | `docs/masterplan/<slug>/` run bundle | Durable disk state: `state.yml`, `spec.md`, `plan.md`, `plan.index.json`, `events.jsonl`, `retro.md`, `handoff.md` |
 | L1 | `commands/masterplan.md` (~800-line sequencer), `bin/masterplan.mjs` (`mp` CLI), `lib/resume.mjs` (`decideNextAction`) | Thin shell; **sole durable state writer**; owns git commit/checkout |
 | L2 | `lib/dispatch-wave.mjs`, `lib/dispatch/`, `lib/wave.mjs`, `lib/plan-merge.mjs` | Native wave dispatcher (fabric path): one wave per launch; returns digests/fragments only, never writes disk/git |
-| L3 | `agents/mp-*.md` (`mp-adversarial-reviewer`, `mp-alignment-auditor`, `mp-fallback-reviewer`, `mp-intent-assessor`, `mp-intent-critic`, `mp-plan-reviewer`, `mp-planner`, `mp-spec-decomposer`, `mp-subsystem-planner`) | Stateless subagents dispatched per task |
-| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 19 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
+| L3 | `agents/mp-*.md` (`mp-adversarial-reviewer`, `mp-alignment-auditor`, `mp-intent-assessor`, `mp-intent-critic`, `mp-plan-reviewer`, `mp-planner`, `mp-spec-decomposer`, `mp-subsystem-planner`) | Stateless subagents dispatched per task |
+| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 23 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
 
 ## Key components
 
@@ -72,14 +72,15 @@ is not itself a `phase` value.
 - [`docs/development.md`](../docs/development.md) — build/test/lint, contributor discipline
 - [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) — multi-agent GitHub-issue coordination (`mp:run-<slug>` publish/follow)
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history and decision rationale
-- `AGENTS.md` / `CLAUDE.md` — defer cross-repo agent policy (AUQ, Serena, Hindsight, model routing) to `policy/workflow-map.json` and the fleet dispatch policy at `/srv/workflows/policy/dispatch.md`
+- `AGENTS.md` / `CLAUDE.md` — defer cross-repo agent policy (AUQ, Serena, Hindsight, model routing) to C1 (`MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`) and the fleet dispatch policy at `/srv/workflows/policy/dispatch.md`
 
 
 ## Recent routing / registration notes
 
-- **All `mp-*` agents** declare a routing-policy **lane name** as `model:` (e.g.
-  `frontier`) and are resolved to the lane's model ref from
-  the routing policy masterplan reads — the delivered map, else `policy/workflow-map.json`.
+- **All `mp-*` agents** omit `model:` frontmatter and declare `preset:` (roster role);
+  Pi dispatch reads model-free intent from C1 (`MP_DISPATCH_MAP`, else
+  `~/.pi/workflows/dispatch-map.json`) and the Pi governed boundary owns model resolution,
+  while Claude Code and Codex use host-native selection.
 - **New seeds default fabric on:** `mp seed` writes `state.dispatch.fabric: true`; fabric is the only wave path since the L2 legacy `launch_workflow` / `dispatch_foreground` path was deleted (A3) — the flag's `off` value is gone.
 - **Pi registration is bare-only:** `bin/register-pi-agents.mjs` writes `mp-*.md`
   under `~/.pi/agent/agents/`; managed `masterplan:mp-*` leftovers are removed;

@@ -10,7 +10,7 @@ masterplan is a Claude Code and Codex CLI plugin implementing the /masterplan co
 - [bundle/state resume engine](.okf/bundle-resume-engine.md)
 - [doctor structural-lint subsystem](.okf/doctor-structural-lint.md)
 - [native wave-dispatch internals](docs/internals/wave-dispatch.md)
-- [routing/dispatch policy](policy/workflow-map.json)
+- [routing/dispatch discovery](lib/dispatch/routing-policy.mjs)
 
 ## Repo entry points
 

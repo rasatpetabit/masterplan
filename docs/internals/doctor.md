@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (24 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (23 check modules).
 
 ## How the doctor works
 
@@ -62,7 +62,7 @@ unit-testable without touching the real host. The main CLI passes
 | Module | Purpose |
 |---|---|
 | `codex-auth` | Reads `~/.codex/auth.json`; warns on expired or expiring-soon JWT claims. ChatGPT auth mode (`auth_mode: chatgpt` + `refresh_token`) short-circuits to `PASS` because Codex auto-refreshes the id_token per invocation. `SKIP` when auth.json is absent. |
-| `routing-policy-health` | Host-scoped probe of the routing policy masterplan resolves work against: the repo copy `policy/workflow-map.json` is readable and structurally complete, every required class resolves (adversary → breaker role on the frontier lane, the adversarial panel cross-vendor), and host-artifact drift from the live generated `~/.pi/workflows/workflow-map.json`. `WARN`-only (review is advisory) — never `ERROR`. |
+| `routing-policy-health` | Host-scoped probe of fresh C1 discovery (`MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`): validates schema 1 and required phase/usecase/agent references (`implement`, `plan`, `challenge`, `bounded-edit`). Unconfigured non-Pi hosts return `PASS`; Pi or explicit missing/unreadable/invalid maps and retired `MP_ROUTING_POLICY` return `ERROR`. Never inspects models or packaged snapshots. |
 | `coord-drift` | For GitHub-coordinated runs (bundles with a `coordination` object in `state.yml`): pure-filesystem drift detection between durable plan state and the published GitHub projection — done tasks whose `issue_map` entry is still open/claimed, orphan claims (claimed with no PR), `issue_map` vs `state.tasks` task-ID drift, and `published_waves` mismatches. No `gh`/network calls. `SKIP` when no bundle is coordinated. |
 | `dangling-run` | Flags non-archived bundles that look abandoned (stale activity / no progress) so operators can sweep or finish them. Advisory `WARN`; `SKIP` when nothing applies. |
 | `index-staleness` | For each bundle with a `plan.md`, computes a sha256 and compares it against the recorded hash in `plan.index.json` (and, for migrated-in-place bundles, `state.plan_hash`). `WARN` on mismatch; `SKIP` when no bundle has a plan. |
@@ -116,7 +116,7 @@ markdown file encoding 53 prose checks interpreted by a Sonnet coordinator at ru
 problems: the coordinator had to re-parse and re-interpret the prose on every
 run, and the checks were untestable in isolation.
 
-v8 replaces this with Node.js modules (11 at the v8.2.0 cutover, now 24)
+v8 replaces this with Node.js modules (11 at the v8.2.0 cutover, now 23)
 (`lib/doctor/*.mjs`), each owning a narrow, deterministic scope. The ~38
 **self-instrumentation checks** (which
 verified the plugin's own source files and were only meaningful inside the

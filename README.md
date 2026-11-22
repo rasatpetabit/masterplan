@@ -65,7 +65,6 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 │  agents/mp-planner.md         agents/mp-plan-reviewer.md       │
 │  agents/mp-intent-critic.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
-│  agents/mp-fallback-reviewer.md                              │
 │  ← no session history; return structured output only         │
 └───────────────────────┬─────────────────────────────────────┘
                         │ node bin/doctor.mjs
@@ -135,7 +134,7 @@ Codex hosts the orchestrator under `/masterplan:masterplan`. See [Codex hosting]
 
 ```
 /masterplan status               # active bundle summary
-/masterplan doctor               # structural lint (24 check modules)
+/masterplan doctor               # structural lint (23 check modules)
 ```
 
 ---
@@ -285,7 +284,7 @@ Crash before a commit is safe: `state.yml` leads git, so `decideNextAction` re-d
 
 ## Doctor
 
-`node bin/doctor.mjs` runs 24 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
+`node bin/doctor.mjs` runs 23 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
 
 ```js
 check(repoRoot, opts) -> Finding[]
@@ -318,7 +317,7 @@ Each recognized key is validated against the schema enum and its **source layer*
 | `autonomy` | `gated \| loose` (alias `full` → `loose`) | `gated` | `gated` halts at every gate; `loose` auto-advances through successful gates; the branch-finish gate always halts regardless |
 | `planning_mode` | `serial \| parallel \| auto` | derived from complexity | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
 | `adversary_review` | `on \| off` | `on` | Default-on finish-time adversary review; new bundles arm `state.review.adversary: true` |
-| `adversary_review_fallback` | list of model refs \| `off` | `null` (derive from the routing policy) | The **finish-gate fallback reviewers**: when the primary adversary review fails or its launch is refused, the gate tries these in order via the read-only `mp-fallback-reviewer` agent (one attempt each, model supplied per dispatch). Default derives from the routing policy — the `adversary` class `chain`, primary excluded, de-duplicated. The fallback is dispatched under the adversary class, whose spawn guard authorizes a model override only inside that chain, so a configured list entry outside it is refused (fail-closed) and the class panel is never a fallback source. A list replaces the derived default outright; `off` disables the fallback (a failed primary skips, as before the feature). See [docs/conventions/adversarial-review-failure-policy.md](docs/conventions/adversarial-review-failure-policy.md) |
+| `adversary_review_fallback` | `off` (omit for governed recovery) | `null` (governed recovery) | `off` sets `noSubstitute: true`. Model arrays are retired and rejected; migrate model choices to inference routing, or omit this key to let the governed boundary own recovery. See [docs/conventions/adversarial-review-failure-policy.md](docs/conventions/adversarial-review-failure-policy.md) |
 | `render_images` | `on \| off` | `off` | Gates the optional shell-side image *generation*; embedding is by-presence |
 | `fabric` | `on \| off` | `on` | The schema accepts `on\|off`; the legacy L2 wave path is deleted, so `off` marks a bundle **unexecutable** (no `state.dispatch.fabric: true` → dispatch refused, nothing restored) |
 | `context_watch` | object | `{threshold: 70, focus: null}` | `context_watch.threshold` is an int 1–99; `context_watch.focus` is a string or null |
@@ -339,7 +338,7 @@ Every `readEnv`-backed control — set these in the environment, not in config f
 |---|---|---|
 | `CLAUDE_CODE_SESSION_ID` | **Guard-D session identity** (the owner lock's identity is the LLM session, not the process). Companion flags: `--session=<id>`, `--host=<host>` to `mp seed` / `mp continue` / `mp record-result` | none — Guard-D refuses without a session id unless the bundle opted out (`--owner-lock=off`) |
 | `MP_DISPATCH_WAVE_CONCURRENCY` | Caps the wave fan-out parallelism (`lib/continue.mjs`, clamped to the descriptor count) | `8` |
-| `MP_ROUTING_POLICY` | Path to an override routing policy for work-class resolution | the delivered `~/.pi/workflows/workflow-map.json`, else the checked-in `policy/workflow-map.json` |
+| `MP_ROUTING_POLICY` | **Retired** — setting it throws `RETIRED_ROUTING_POLICY`; unset it, use `MP_DISPATCH_MAP` for C1 discovery, and migrate model choices to inference routing | unset (must not be set) |
 | `MP_DISPATCH_MAP` | Explicit path to the model-free C1 dispatch map read at every dispatch (`lib/dispatch/routing-policy.mjs`); when set, it must exist (no fallback) | `~/.pi/workflows/dispatch-map.json`; unconfigured on non-Pi hosts when absent |
 | `SKYNET_VERIFY_ALLOWLIST` | Recorded verify allowlist for audit continuity (historical name; local verification does not gate on it — the value surfaces in the wave record) | `bash -c` |
 | `MP_CONTEXT_WINDOW` | Explicit context window override for `mp context-status` window resolution (takes precedence over harness-model/`[1m]` markers, below the explicit flag) | auto |
@@ -372,7 +371,7 @@ Codex can host the command via `/masterplan:masterplan` through `skills/masterpl
 
 - The orchestrator runs `mp detect-host --agent-is-codex` at boot.
 - A Codex host (`isCodex`) lacks Claude Code's Workflow tool, so waves run on the foreground-sequential path (`mp continue --codex-suppressed`) instead of a background workflow launch.
-- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it runs the harness-native adversary class/panel (resolved from the routing policy `policy/workflow-map.json`), not Codex, so there is no recursion to suppress.
+- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — on Pi it dispatches model-free challenge intent from C1 (`MP_DISPATCH_MAP` / `~/.pi/workflows/dispatch-map.json`) through the governed boundary, and on Claude Code / Codex it uses host-native selection, so there is no Codex recursion to suppress.
 
 ## The v10 Bootstrap Boundary
 

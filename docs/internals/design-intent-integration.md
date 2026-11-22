@@ -103,7 +103,7 @@ skill's declared `host_contract_version` and `schema_format_version`.
   edit that changes behavior without bumping a version still changes the identity and is
   detected.
 
-`policy/design-intent-skill.json` — a repo-side pin beside `policy/workflow-map.json`,
+`policy/design-intent-skill.json` — a repo-side pin under `policy/`,
 **not** a bundle artifact (bundle state lives on `main` and is written only by L1 per
 CD-7) — records:
 
@@ -153,7 +153,7 @@ follows to the real surfaces.
 
 ### The host contract, pinned and dispatched
 
-- **Pin:** `policy/design-intent-skill.json` (repo-side, beside `policy/workflow-map.json`).
+- **Pin:** `policy/design-intent-skill.json` (repo-side under `policy/`).
   `test/design-intent-host-contract.test.mjs` recomputes the identity over the pinned
   behavior-skills commit's tree and compares against the pin's `manifest_digest`.
 - **Identity mechanics:** `lib/schema-snapshot.mjs` (`captureSchemaSnapshot`,

@@ -32,7 +32,7 @@ state fields (`id`, `wave`, `status`, `files`) with its `plan.index.json` fields
 (`description`, `verify_commands`, `codex`, `sensitive`, `conversational`), runs
 `routeTask(merged, config, env)`, and emits a lean routed payload that is consumed by
 `dispatchWaveViaFabric` / descriptor construction. Native spawn descriptors carry only the task
-class and payload — routing is resolved from the checked-in policy `policy/workflow-map.json`.
+class and payload — C1 discovery reads `MP_DISPATCH_MAP` when set, else `~/.pi/workflows/dispatch-map.json` (unconfigured non-Pi hosts carry phase and agent only and use host-native selection).
 Before that payload is returned, `checkWaveDisjoint` refuses the wave when two tasks' resolved
 declarations overlap as paths: a directory declaration (ending in `/` or `\`, or a bare `.`) covers
 that directory and everything under it, `\` is a separator, and spellings that normalize to the
@@ -78,9 +78,10 @@ When the per-run strangler flag `state.dispatch.fabric` is `true` (default for *
 consumer for that op is exactly `mp dispatch-wave --state=<path>` (`lib/dispatch-wave.mjs`) —
 dispatch AND record complete inside the command:
 
-1. **Same seams, no forked routing** — the wave is re-derived through `prepareWave` (native
-   spawn payloads carry only the task `class`; the routing policy `policy/workflow-map.json`
-   resolves it to agent/lane/model).
+1. **Same seams, no forked routing** — the wave is re-derived through `prepareWave` (configured
+   descriptors carry model-free C1 intent — phase/use case, agent, requested effort, vocabulary,
+   constraints — resolved from `MP_DISPATCH_MAP` or `~/.pi/workflows/dispatch-map.json`;
+   unconfigured non-Pi hosts carry phase and agent only for host-native selection).
    **Routing-input parity:** the prepare inputs (routing mode, `codexHostSuppressed` — thread
    `--codex-suppressed` on a suppressed host — `linkedWorktree`) mirror `continue`'s own call
    and are frozen into the record as `routing_inputs` at attempt 1; retries reuse the frozen
@@ -273,8 +274,9 @@ Masterplan does **not** own the review engine. When review is on, for every `don
    those paths, while disjoint approved siblings keep their commits and review evidence.
 
 All chunking, retries, reconciliation, findings extraction, and verdict semantics live in the
-harness-native review engine (`/srv/workflows/policy/dispatch.md`; the routing policy
-`policy/workflow-map.json`). Masterplan
+harness-native review engine (`/srv/workflows/policy/dispatch.md`, fed by model-free C1 intent from
+`MP_DISPATCH_MAP` / `~/.pi/workflows/dispatch-map.json` on configured hosts, or host-native
+selection on unconfigured Claude Code and Codex hosts). Masterplan
 only orchestrates lifecycle, payload binding, invocation, and durable recording
 (`lib/task-review.mjs`).
 

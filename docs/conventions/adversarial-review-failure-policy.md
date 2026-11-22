@@ -2,10 +2,10 @@
 
 **Applies to:** adversary review paths masterplan owns — per-task execution review (the native
 review seam from `mp dispatch-wave` / `reviewNativeResult` when `state.review.adversary` is
-enabled) and whole-branch finish review (`run_adversary_review`, §2c). Review EXECUTION is the
-harness-native adversary class (breaker role, frontier lane; adversarial panel for cross-vendor
-coverage), resolved from the checked-in routing policy `policy/workflow-map.json`. No model is
-named in masterplan; the routing policy resolves the adversary lane.
+enabled) and whole-branch finish review (`run_adversary_review`, §2c). On configured hosts, review
+intent is discovered from C1 (`MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`; phase
+`challenge`) and executed by the Pi governed boundary; unconfigured Claude Code and Codex hosts use
+host-native selection. No model is named in masterplan.
 **Scope:** review-lane outcomes after masterplan has handed the exact review payload to the
 harness-native reviewer. Transport-level 429 / 5xx / TCP timeout retries remain in
 `docs/conventions/api-retry-policy.md`.
@@ -16,7 +16,7 @@ harness-native reviewer. Transport-level 429 / 5xx / TCP timeout retries remain 
 
 | Concern | Owner |
 |---|---|
-| Chunk sizes, retries, reconciliation, findings extraction, verdict semantics, harness metadata | harness-native adversary class/panel — see `/srv/workflows/policy/dispatch.md` and the routing policy `policy/workflow-map.json` |
+| Chunk sizes, retries, reconciliation, findings extraction, verdict semantics, harness metadata | harness-native adversary review / governed boundary — see `/srv/workflows/policy/dispatch.md` and C1 discovery (`MP_DISPATCH_MAP` / `~/.pi/workflows/dispatch-map.json`) |
 | Capture full edit-locus diff, hash it, run the native review, project + persist, populate `blocking_reviews[]`, re-entry guard | **masterplan** (`lib/task-review.mjs`, `lib/dispatch-wave.mjs`, `lib/wave-commit.mjs`) |
 | D6 undeclared-write revert | **masterplan** — independent of review outcome |
 

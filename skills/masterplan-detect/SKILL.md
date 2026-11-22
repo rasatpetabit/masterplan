@@ -5,7 +5,7 @@ description: "Suggest /masterplan import only for unmigrated docs/masterplan/<sl
 
 ## Central agent policy
 
-AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (routing resolves from the delivered `~/.pi/workflows/workflow-map.json`, else `policy/workflow-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (model-free C1 discovery reads `MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
 
 
 # Detecting legacy masterplan bundles for /masterplan import
