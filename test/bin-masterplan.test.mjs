@@ -14,7 +14,7 @@ import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundl
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 import { createHash } from 'node:crypto';
-import { composeWaveDispatchKey } from '../lib/dispatch-wave.mjs';
+import { composeWaveDispatchKey, captureFullWorkingDiff } from '../lib/dispatch-wave.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
@@ -3042,6 +3042,7 @@ test('native-path record-result ignores a smuggled deferred_review_events field 
       findings: [],
       blocking_findings: [],
       summary: 'ok',
+      diff_sha: createHash('sha256').update(captureFullWorkingDiff(WT, undefined, head)).digest('hex'),
       harness: {
         degraded: false, timed_out: false, stalled: false,
         deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,

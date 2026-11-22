@@ -258,12 +258,14 @@ Masterplan does **not** own the review engine. When review is on, for every `don
    Phase B re-calls `mp record-result` with `--reviews-file=<task_id → review record JSON>`.
    Carry the `diff_sha` of the artifact actually reviewed into each record. Hosts that omit it
    remain compatible with the first hash issued for that task in the attempt; a later Phase A
-   cannot silently rebind their receipts to new bytes. An eligible durable review can be reused
-   for the same task, episode and artifact.
+   cannot silently rebind their receipts to new bytes. A one-shot receipt without either its
+   reviewed hash or a Phase A pin is refused before writing. An eligible durable review can be
+   reused for the same task, episode and artifact.
 4. Projects the harness review record into a compact canonical shape
    (`approve | rework | reject | error` + findings + harness metadata). `recordWaveResult`
-   authorizes the entire batch and appends ordinary review evidence before marking tasks done,
-   but only after the owner/epoch/scope and evidence checks pass.
+   authorizes the entire batch before opening a write-ahead recording (see below). Review
+   evidence is written before task marks; the journal carries the whole accepted batch if the
+   state, event log, or Git commits lag.
 5. Records a successful digest as `done` only when the authoritative review does not
    block. A blocking review settles the dispatch attempt, not the task. The active
    marker retains the task for rework; `continue` redispatches it without resetting its
@@ -290,6 +292,41 @@ A blocking review leaves the task pending and keeps the frozen review base: ordi
 redispatch would rebase the review onto unapproved code. The explicit recovery path still
 requires a bound receipt and the original preservation checks; in particular, a MAIN HEAD
 change (including a recorder state commit) can prevent a follow-up from passing the watch check.
+
+### Recording refusal and crash recovery
+
+A recording refusal (owner/epoch, artifact, scope amendment, a recovery preservation
+violation, or a deterministic Git preflight failure such as an in-progress merge) happens
+before changing `events.jsonl`, `state.yml`, or the dispatch record. The ordinary watch-list
+verdict is calculated before any write, too, but is an audit/cleanup outcome, not a refusal.
+Ordinary cleanup and staging paths are resolved up front. Git commands still run with hooks
+and can fail at execution time (for example from an index lock, a hook, or disk failure).
+These are reported as **interrupted recordings**, not new authorization decisions. Fix the
+underlying error and use `mp record-result --reconcile` or `mp continue`.
+
+The local, atomic `.wave-recording.json` in the bundle directory is never staged. It pins the
+validated batch, marks, planned Git paths, and the pre-write event offset and edit-locus
+snapshots. `continue` discovers it **before** deciding whether to finalize or reset the wave;
+this also works if no tasks have been marked or if the active marker is already gone. The same
+result may be retried without reprojecting its reviews. Re-entry checks the state, dispatch
+record, event prefix, and live loci against the permitted prefixes before resuming. A new
+mutation outside those prefixes (including changed reviewed file bytes) blocks replay; do not
+adopt new bytes or refresh a frozen watch/review base as part of recovery.
+
+| Last durable step | Reconcile behavior |
+| --- | --- |
+| No journal published | Bundle unchanged; submit the original result normally. |
+| Journal published; no or partial review append (even a short write) | Append only the missing, byte-checked suffix. The journal supplies every verdict and mark, even if tasks still show `pending`. |
+| Review append complete, or task marks written with marker intact | Reuse the receipt bytes. Reapply only missing state writes and run the pinned cleanup/commit plan. |
+| Tracked restore, untracked clean, workspace cleanup, or code staging | Replay scoped cleanup and staging idempotently; never authorize those paths from a newly captured diff. |
+| One or more code commits | Recognize completed locus commits by parent, message, allowed paths, and retained accepted bytes; commit remaining loci and preserve clean-locus baselines. |
+| Tail checkpoint (code SHAs and audit bytes), partial/complete audit append, or active marker clear | Skip completed Git effects; append any remaining audit bytes once, write final state, and commit MAIN. |
+| MAIN staging or state commit | Finish the commit or recognize the completed commit, then write the dispatch outcome. |
+| Dispatch record renamed; journal still present | Recognize the same outcome, then retire the journal. After retirement there is no recording left to replay. |
+
+State, dispatch, and journal replacements are atomic renames. This covers interrupted
+controller executions; it does not promise storage recovery after power loss, remove a stale
+Git lock automatically, or reconstruct a pre-journal controller's lost worker result.
 
 **Native path.** The wave's review requirement rides on the descriptors (`review: {adversary: true}`)
 and `review_context` is frozen into the wave-dispatch record before

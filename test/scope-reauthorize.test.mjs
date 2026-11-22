@@ -135,6 +135,11 @@ for (const legacy of [false, true]) test(legacy
   const amended = readState(fx.statePath);
   assert.deepEqual(amended.active_run.scope, ['src/a', 'src/']);
   assert.deepEqual(amended.tasks[0].files, ['src/']);
+  if (legacy) {
+    const phaseA = cliRecord(fx);
+    assert.equal(phaseA.op, 'run_native_reviews');
+    reviewArgs[0] = reviewFile(fx, { diff_sha: phaseA.pending_reviews[0].diff_sha });
+  }
   const recorded = cliRecord(fx, ...reviewArgs);
   assert.equal(recorded.outcome, 'recorded');
   assert.deepEqual(recorded.reverted, ['rogue']);

@@ -140,10 +140,11 @@ what to do when the engine's completion notification re-invokes the controller (
 
 **Completion** (re-invoked holding the engine's `<result>` — reached from §2 step 3):
 
-The whole record transaction is ONE subcommand — read-only amended-scope preflight → heartbeat → mark digests → D6 verify-scope →
-out-of-scope revert → split commit (code→WT, state→MAIN) → marker clear (iff the whole wave is done)
-→ the `next` advisory — implemented in `lib/wave-commit.mjs`, crash-safe at every prefix (any crash resumes
-via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `--reconcile` mode):
+The whole record transaction is ONE subcommand — read-only scope, evidence and Git preflight →
+heartbeat → local write-ahead journal → append review evidence and mark digests → scoped cleanup
+and code commit (WT) → clear the marker (iff the whole wave is done) and commit state (MAIN) →
+finalize the dispatch record → the `next` advisory. `mp continue` resumes the journal before
+considering any reset or redispatch; `mp record-result --reconcile` runs the same transaction.
 
 1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
    (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
@@ -490,13 +491,12 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
    - **Code** → WT, path-scoped to the wave's in-scope files ONLY — NEVER `add -A` / `commit -am`
      (WT's frozen bundle-dir checkout, if present, must not be swept into the branch).
    - **State** → `docs/masterplan/<slug>` in MAIN (Guard D sentinels excluded by pathspec).
-   - On the wave path BOTH commits execute inside `mp record-result` (`lib/wave-commit.mjs`). The
-     LEADING durable action is its atomic state WRITE, then code commit (WT), then state commit
-     (MAIN) — so any crash prefix re-derives: `mp continue` re-runs the tail inline (the
-     `finalize_run` reconcile: `mp record-result --reconcile`) off the persisted
-     `active_run.{scope,baseline}` (a clean WT no-ops down to the marker clear). On the finish path
-     the same two-loci discipline runs inside `mp finish-step` (§2c) — the task-scope dirty-commit in
-     WT, the gate/archive bundle commits in MAIN.
+   - On the wave path BOTH commits execute inside `mp record-result` (`lib/wave-commit.mjs`). A
+     local write-ahead journal pins the authorized state and effects before any bundle or Git
+     changes; neither the journal nor Guard D sentinels are staged. `mp continue` or `mp record-result
+     --reconcile` replays that journal if interrupted. On the finish path the same two-loci discipline
+     runs inside `mp finish-step` (§2c) — the task-scope dirty-commit in WT, the gate/archive bundle
+     commits in MAIN.
 
 7. **Teardown — internalized in `mp finish-step` (§2c).** The `--choice` resolution transaction runs
    the disposition git in each repository's main checkout. Before ANY merge, every not-yet-landed

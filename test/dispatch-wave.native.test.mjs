@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import childProcess, { execFileSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 
 import {
@@ -32,6 +33,7 @@ import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult, authorizeRecording, assertEarlierTaskFilesUnchanged } from '../lib/wave-commit.mjs';
+import { hasWaveRecording, recordingKey } from '../lib/wave-recording.mjs';
 import { captureFullWorkingDiff, rebuildFullWorkingDiff } from '../lib/working-diff.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 import { worktreeBranchFor, worktreePathFor } from '../lib/worktree.mjs';
@@ -746,6 +748,15 @@ test('missing disposition refuses an ambiguous prior emission; only a durable ne
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).review_context.emitted_reviews.filter((id) => id === '1').length, 1);
 });
 
+// Simulate a one-shot caller that reviewed the exact frozen-base artifact.
+function workingReceipt(fx, id, receipt) {
+  const wave = readState(fx.statePath).active_run.wave;
+  const { review_context: ctx } = readWaveDispatchRecord(fx.bundleDir, wave);
+  const task = ctx.tasks.find((t) => t.task_id === id);
+  const diff = captureFullWorkingDiff(task.repo, undefined, task.base_sha ?? ctx.base_sha);
+  return { ...receipt, diff_sha: createHash('sha256').update(diff).digest('hex') };
+}
+
 test('phase B: provided native reviews ingest through the centralized projection', async () => {
   const fx = makeNativeFixture({ slug: 'native-parity', review: { adversary: true } });
   launchNative(fx);
@@ -758,7 +769,7 @@ test('phase B: provided native reviews ingest through the centralized projection
   const reviewed = await reviewNativeResult({
     statePath: fx.statePath, self: fx.self,
     result: nativeResult,
-    providedReviews: { 1: rejectRecord },
+    providedReviews: { 1: workingReceipt(fx, 1, rejectRecord) },
     now: 3000,
   });
   assert.equal(reviewed.review_outcome, 'native-reviews-recorded');
@@ -770,6 +781,18 @@ test('phase B: provided native reviews ingest through the centralized projection
   });
   assert.equal(recorded.blocking_reviews[0].verdict, 'reject');
   assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
+test('standalone phase B: an unbound one-shot receipt refuses before refreshing ownership', async () => {
+  const fx = makeNativeFixture({ slug: 'native-unbound' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  write(fx.WT, 'src/a.txt', 'native edit\n');
+  const before = x22aSnapshot(fx);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 3000,
+    result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] },
+    providedReviews: { 1: rejectRecord } }), /run Phase A.*reviewed.*hash/);
+  assert.deepEqual(x22aSnapshot(fx), before);
 });
 
 test('phase B: a missing provided review fails closed as an error review', async () => {
@@ -830,7 +853,7 @@ async function x22Probe(label, call) {
 for (const mode of ['foreign owner', 'missing owner', 'foreign phase B', 'foreign recovery', 'foreign direct recovery']) {
   test(`X22 F1 ${mode} cannot consume dispositions or mutate review events`, async () => {
     const fx = await x22Fixture(`x22-${mode.replaceAll(' ', '-')}`);
-    disposeReviewEpisode(fx.args);
+    const restarted = disposeReviewEpisode(fx.args);
     if (mode.includes('recovery')) {
       git(fx.WT, 'add', 'src/a.txt');
       git(fx.WT, 'commit', '-q', '-m', 'disposable recovered work');
@@ -851,7 +874,8 @@ for (const mode of ['foreign owner', 'missing owner', 'foreign phase B', 'foreig
       ...direct,
       statePath: fx.statePath, result: fx.result, policy: dispatchFixture, now: 2300,
       self: mode === 'missing owner' ? null : foreign,
-      ...(mode === 'foreign phase B' ? { providedReviews: { 1: rejectRecord } } : {}),
+      ...(mode === 'foreign phase B' ? { providedReviews: { 1: workingReceipt(fx, 1,
+        { ...rejectRecord, episode_subject: restarted.disposition.subject }) } } : {}),
       ...(mode === 'foreign recovery' ? { recoverySelector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') } } : {}),
     }));
     assert.match(out.error?.message ?? '', /owned by another|owner identity required/);
@@ -1007,7 +1031,7 @@ test('X22 F4 restart consumes fresh reject, never old same-diff approval', async
   write(fx.WT, 'src/a.txt', 'change\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
   const old = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2100,
-    result, providedReviews: { 1: x22Approval }, policy: dispatchFixture });
+    result, providedReviews: { 1: workingReceipt(fx, 1, x22Approval) }, policy: dispatchFixture });
   assert.equal(old.tasks[0].review.verdict, 'approve');
   const before = x22Events(fx);
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
@@ -1015,7 +1039,7 @@ test('X22 F4 restart consumes fresh reject, never old same-diff approval', async
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
   const restart = disposeReviewEpisode({ statePath: fx.statePath, self: fx.self, now: 2200, wave: 1, taskId: 1, disposition: 'restart' });
   const out = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
-    result, providedReviews: { 1: { ...rejectRecord, episode_subject: restart.disposition.subject } }, policy: dispatchFixture });
+    result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
   console.log('PROBE restart NEW reject supplied, consumed verdict:', out.tasks[0].review.verdict,
     'summary:', out.tasks[0].review.summary);
   assert.equal(out.tasks[0].review.verdict, 'reject');
@@ -1025,7 +1049,7 @@ test('X22 F4 restart consumes fresh reject, never old same-diff approval', async
   assert.equal(latest.data.episode_subject, restart.disposition.subject);
   // Same new episode re-entry remains idempotent and reuses its reject, not an old approval.
   const again = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
-    result, providedReviews: { 1: { ...x22Approval, episode_subject: restart.disposition.subject } }, policy: dispatchFixture });
+    result, providedReviews: { 1: workingReceipt(fx, 1, { ...x22Approval, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
   assert.equal(again.tasks[0].review.verdict, 'reject');
   const bytes = x22Events(fx);
   await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
@@ -1140,7 +1164,7 @@ for (const viaContinue of [false, true]) {
     const fx = await x22Fixture(`x22-r3-crash-reject-${viaContinue}`);
     const restart = disposeReviewEpisode(fx.args);
     const fresh = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
-      result: fx.result, providedReviews: { 1: { ...rejectRecord, episode_subject: restart.disposition.subject } }, policy: dispatchFixture });
+      result: fx.result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
     assert.equal(fresh.tasks[0].review.verdict, 'reject');
     // Actual step-1 crash window: status is durable, the marker and artifact remain.
     const state = readState(fx.statePath);
@@ -1196,10 +1220,9 @@ for (const verdict of ['approve', 'reject']) {
           result: fx.result, recoverySelector, policy: dispatchFixture });
         options = { recoverySelector, identity: manifest.pending_reviews[0].identity };
       }
-      const supplied = verdict === 'approve' ? x22Approval : rejectRecord;
+      const supplied = { ...(verdict === 'approve' ? x22Approval : rejectRecord), episode_subject: restart.disposition.subject };
       const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
-        result: fx.result, providedReviews: { 1: { ...supplied, episode_subject: restart.disposition.subject,
-          ...(options.identity ? { identity: options.identity } : {}) } },
+        result: fx.result, providedReviews: { 1: options.identity ? { ...supplied, identity: options.identity } : workingReceipt(fx, 1, supplied) },
         ...(options.recoverySelector ? { recoverySelector: options.recoverySelector } : {}), policy: dispatchFixture });
       for (const { event } of reviewed.deferred_review_events ?? []) appendEvent(fx.statePath, event);
       if (!committedRecovery) {
@@ -1223,7 +1246,7 @@ test('X22 R3 F3 partial result restores omitted fresh rejection', async () => {
   const fx = await x22Fixture('x22-r3-omitted-reject');
   const restart = disposeReviewEpisode(fx.args);
   await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
-    result: fx.result, providedReviews: { 1: { ...rejectRecord, episode_subject: restart.disposition.subject } }, policy: dispatchFixture });
+    result: fx.result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
   const state = readState(fx.statePath);
   state.tasks[0].status = 'done';
   writeState(fx.statePath, state);
@@ -1255,7 +1278,7 @@ test('X22 R3 F3 newly submitted rejection leaves work pending on continue', asyn
   const fx = await x22Fixture('x22-r3-new-reject-continue');
   const restart = disposeReviewEpisode(fx.args);
   const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
-    result: fx.result, providedReviews: { 1: { ...rejectRecord, episode_subject: restart.disposition.subject } }, policy: dispatchFixture });
+    result: fx.result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
   const res = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
     worktree: fx.WT, result: reviewed });
   assert.equal(res.blocking_reviews[0]?.verdict, 'reject');
@@ -1823,6 +1846,8 @@ function wave23Fixture() {
   return { fx, tasks, result, snapshot, start, frozen, head };
 }
 
+// This happy path also passes main: the refusal regressions below distinguish
+// the new controller from the already-aligned hash base on main.
 test('wave 23 CLI: bundle-only fast-forward still records all ten reviewed files', () => {
   const { fx, tasks, result, start, head, frozen } = wave23Fixture();
   const reviews = start();
@@ -1860,6 +1885,139 @@ test('wave 23 CLI: an edited task file requires fresh review without changing th
   assert.deepEqual(snapshot(), before);
   assert.deepEqual(crossAttemptRecord(fx, result, refreshed).recorded, [67, 68, 93]);
 });
+
+test('wave 23 CLI: one-shot receipts need the reviewed hash without a Phase A pin', () => {
+  const { fx, tasks, result, snapshot, frozen } = wave23Fixture();
+  const reviewed = createHash('sha256').update(captureFullWorkingDiff(fx.WT, undefined, frozen)).digest('hex');
+  write(fx.WT, tasks[0].files[0], 'edited after the external review\n');
+  const before = snapshot();
+  const receipts = (diff_sha) => Object.fromEntries(tasks.map(({ id }) => [id,
+    diff_sha === undefined ? x22Approval : { ...x22Approval, diff_sha }]));
+  assert.throws(() => crossAttemptRecord(fx, result, receipts()), /run Phase A.*reviewed.*hash/);
+  assert.deepEqual(snapshot(), before);
+  assert.throws(() => crossAttemptRecord(fx, result, receipts(reviewed)), /fresh review required/);
+  assert.deepEqual(snapshot(), before);
+  write(fx.WT, tasks[0].files[0], `reviewed ${tasks[0].files[0]}\n`);
+  assert.deepEqual(crossAttemptRecord(fx, result, receipts(reviewed)).recorded, [67, 68, 93]);
+});
+
+test('wave 23 CLI: Git cannot record during an in-progress merge and refusal changes no bundle bytes', () => {
+  const { fx, result, snapshot, start } = wave23Fixture();
+  const reviews = start();
+  const mergeHead = git(fx.WT, 'rev-parse', '--path-format=absolute', '--git-path', 'MERGE_HEAD');
+  fs.writeFileSync(mergeHead, `${git(fx.WT, 'rev-parse', 'HEAD^')}\n`);
+  const before = snapshot();
+  assert.throws(() => crossAttemptRecord(fx, result, reviews), /during a merge/);
+  assert.deepEqual(snapshot(), before);
+});
+
+for (const [prefix, replay] of [
+  ['journal', 'continue'], ['short review append', 'retry'], ['review append', 'reconcile'],
+  ['marked state', 'retry'], ['tracked cleanup', 'reconcile'], ['untracked cleanup', 'retry'],
+  ['workspace cleanup', 'reconcile'], ['code staging', 'reconcile'], ['code commit', 'retry'], ['tail journal', 'reconcile'],
+  ['audit append', 'retry'], ['cleared marker', 'continue'], ['state staging', 'reconcile'],
+  ['state commit', 'retry'], ['dispatch rename', 'continue'],
+]) {
+  test(`wave 23 recording: crash after ${prefix} recovers through ${replay}`, async (t) => {
+    const { fx, tasks, result, start, snapshot } = wave23Fixture();
+    write(fx.WT, 'src/seed.txt', 'out-of-scope tracked bytes\n');
+    write(fx.WT, 'litter.txt', 'out-of-scope untracked bytes\n');
+    write(fx.tmp, 'loose.txt', 'workspace artifact\n');
+    const reviewed = start();
+    let deferredEvents;
+    const projected = await reviewNativeResult({ statePath: fx.statePath, result, providedReviews: reviewed,
+      policy: dispatchFixture, onReviewEvents: (events) => { deferredEvents = events; } });
+    const fail = () => { throw new Error(`injected crash after ${prefix}`); };
+    const append = fs.appendFileSync;
+    const rename = fs.renameSync;
+    const exec = childProcess.execFileSync;
+    const mocks = [t.mock.method(fs, 'appendFileSync', (file, bytes, ...args) => {
+      const text = String(bytes);
+      if (prefix === 'short review append' && text.includes('task_adversary_review')) {
+        append(file, Buffer.from(bytes).subarray(0, text.indexOf('\n') + 9), ...args);
+        fail();
+      }
+      append(file, bytes, ...args);
+      if ((prefix === 'review append' && text.includes('task_adversary_review')) ||
+          (prefix === 'audit append' && text.includes('wave_recorded'))) fail();
+    }), t.mock.method(fs, 'renameSync', (from, to) => {
+      rename(from, to);
+      if (String(to).endsWith('/.wave-recording.json')) {
+        const saved = JSON.parse(fs.readFileSync(to, 'utf8'));
+        if ((prefix === 'journal' && !saved.tail) || (prefix === 'tail journal' && saved.tail)) fail();
+      }
+      if (to === fx.statePath && ((prefix === 'marked state' && readState(to).active_run) ||
+          (prefix === 'cleared marker' && !readState(to).active_run))) fail();
+      if (prefix === 'dispatch rename' && String(to).endsWith('/wave-23.dispatch.json')) fail();
+    }), t.mock.method(childProcess, 'execFileSync', (cmd, args, ...rest) => {
+      if (prefix === 'workspace cleanup' && cmd === 'git' && args[1] === fx.WT &&
+          args.includes('add') && !args.includes('--dry-run')) {
+        assert.equal(fs.existsSync(path.join(fx.tmp, 'loose.txt')), false);
+        fail();
+      }
+      const out = exec(cmd, args, ...rest);
+      if (cmd === 'git' && !args.includes('--dry-run') && (
+        (prefix === 'tracked cleanup' && args.includes('checkout')) ||
+        (prefix === 'untracked cleanup' && args.includes('clean')) ||
+        (prefix === 'code staging' && args.includes('add') && args[1] === fx.WT) ||
+        (prefix === 'state staging' && args.includes('add') && args[1] === fx.MAIN) ||
+        (prefix === 'code commit' && args.includes('commit') && args[1] === fx.WT) ||
+        (prefix === 'state commit' && args.includes('commit') && args[1] === fx.MAIN))) fail();
+      return out;
+    })];
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => recordWaveResult({ statePath: fx.statePath, result: projected, deferredEvents,
+        requestKey: recordingKey({ result, recoverySelector: null }), finalizeDispatch: true, now: 3000 }), /injected crash/);
+    } finally {
+      for (const mock of mocks) mock.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(hasWaveRecording(fx.statePath), true);
+    if (prefix === 'journal') {
+      const blocked = await dispatchWaveViaFabric({ statePath: fx.statePath, takeover: true, policy: dispatchFixture });
+      assert.equal(blocked.outcome, 'recording-interrupted');
+    }
+    if (prefix === 'review append' || prefix === 'short review append') {
+      assert.deepEqual(readState(fx.statePath).tasks.map((task) => task.status), ['pending', 'pending', 'pending']);
+      const before = snapshot();
+      assert.throws(() => crossAttemptRecord(fx, { ...result, tasks: result.tasks.slice(1) }, reviewed), /does not match this request/);
+      assert.deepEqual(snapshot(), before);
+    }
+    if (prefix === 'code commit') {
+      const file = tasks[0].files[0];
+      write(fx.WT, file, 'unreviewed bytes after the recorder commit\n');
+      const before = snapshot();
+      assert.throws(() => crossAttemptRecord(fx, result, reviewed), /artifact episode evidence mismatch/);
+      assert.deepEqual(snapshot(), before);
+      write(fx.WT, file, `reviewed ${file}\n`);
+    }
+    if (replay === 'continue') {
+      assert.equal(continueRun({ statePath: fx.statePath, now: 3100 }).op, 'run_skill');
+    } else if (replay === 'retry') {
+      assert.deepEqual(crossAttemptRecord(fx, result, reviewed).recorded, [67, 68, 93]);
+    } else {
+      const res = recordWaveResult({ statePath: fx.statePath, result: null });
+      assert.deepEqual(res.recorded, [67, 68, 93]);
+      assert.equal(res.cleared, true);
+    }
+    assert.equal(readState(fx.statePath).active_run, null);
+    assert.deepEqual(readState(fx.statePath).tasks.map((task) => task.status), ['done', 'done', 'done']);
+    assert.deepEqual(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').split('\n').sort(),
+      tasks.flatMap((task) => task.files).sort());
+    assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+    assert.equal(fs.existsSync(path.join(fx.tmp, 'loose.txt')), false);
+    assert.equal(hasWaveRecording(fx.statePath), false);
+    assert.equal(git(fx.MAIN, 'ls-files', '*/.wave-recording.json*'), '');
+    const events = x22Events(fx).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(events.filter((e) => e.type === 'task_adversary_review').map(({ data }) => data.task), [67, 68, 93]);
+    assert.equal(events.filter((e) => e.type === 'wave_recorded').length, 1);
+    const dispatch = readWaveDispatchRecord(fx.bundleDir, 23);
+    assert.equal(dispatch.status, 'recorded');
+    assert.deepEqual(dispatch.record_outcome.commits, { code: git(fx.WT, 'rev-parse', 'HEAD'),
+      code_by_repo: { [fx.WT]: git(fx.WT, 'rev-parse', 'HEAD') }, state: git(fx.MAIN, 'rev-parse', 'HEAD') });
+  });
+}
 
 test('wave 23 CLI: stale epoch refuses without appending any review or changing the bundle', () => {
   const { fx, result, snapshot } = wave23Fixture();
@@ -2536,7 +2694,7 @@ for (const external of [false, true]) {
   test(`cross-attempt: legacy exact artifact records; A unchanged (${external ? 'sibling' : 'run repo'})`, async () => {
     const fx = await crossAttemptFixture({ external, mixedArtifact: true });
     makeLegacy(fx);
-    const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+    const out = crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) });
     assert.deepEqual(out.recorded, [2]);
     assert.equal(out.cleared, true);
     assert.equal(git(fx.aRepo, 'log', '-1', '--format=%H', '--', 'src/1.txt', 'src/seed.txt'), fx.aCommit);
@@ -2558,7 +2716,7 @@ for (const scenario of ['blocked partial in artifact', 'parent is not frozen bas
     const beforeMain = git(fx.MAIN, 'rev-parse', 'HEAD');
     const beforeHead = git(fx.aRepo, 'rev-parse', 'HEAD');
     const beforeStatus = git(fx.aRepo, 'status', '--porcelain');
-    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) }), (err) => {
       assert.equal(err.status, 2);
       assert.match(String(err.stderr), scenario === 'committed drift after C'
         ? /task 1:.*changed files src\/1\.txt.*fresh review/
@@ -2580,7 +2738,7 @@ test('cross-attempt: legacy refuses ambiguous direct children even with a matchi
   const other = git(fx.aRepo, 'commit-tree', base + '^{tree}', '-p', base, '-m', 'other direct child');
   const merged = git(fx.aRepo, 'commit-tree', fx.aCommit + '^{tree}', '-p', fx.aCommit, '-p', other, '-m', 'merge children');
   git(fx.aRepo, 'reset', '--soft', merged);
-  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) }), (err) => {
     assert.match(String(err.stderr), /task 1:.*missing trusted recorded code baseline/);
     return true;
   });
@@ -2597,7 +2755,7 @@ test('cross-attempt: legacy refuses declared files outside the owning review rep
   const state = readState(fx.statePath);
   state.tasks[0].files.push(path.join(other, 'src/1.txt'));
   writeState(fx.statePath, state);
-  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) }), (err) => {
     assert.match(String(err.stderr), /task 1:.*missing trusted recorded code baseline/);
     assert.ok(String(err.stderr).includes(other));
     return true;
@@ -2701,7 +2859,7 @@ for (const shared of [true, 'directory']) {
     assert.notEqual(frozen, fx.aCommit);
     assert.equal(git(fx.WT, 'show', `${frozen}:src/1.txt`), 'UNREVIEWED committed A drift');
     const before = { state: fs.readFileSync(fx.statePath, 'utf8'), head: git(fx.WT, 'rev-parse', 'HEAD') };
-    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+    assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) }), (err) => {
       assert.match(String(err.stderr), /task 1:.*repository .*src\/1\.txt.*fresh review/);
       return true;
     });
@@ -2718,7 +2876,7 @@ for (const external of [false, true]) {
       assert.equal(fx.aCommit, fx.acceptedA, 'recording made no code commit in clean locus');
       assert.deepEqual(record.history[0].record_outcome.commits.code_by_repo, { [fx.aRepo]: fx.acceptedA });
       const ownerBefore = structuredClone(record.history[0].record_outcome);
-      const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+      const out = crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) });
       assert.deepEqual(out.recorded, [2]);
       assert.equal(out.cleared, true);
       assert.equal(out.commits.code_by_repo[fx.WT], git(fx.WT, 'rev-parse', 'HEAD'));
@@ -2735,12 +2893,12 @@ test('cross-attempt: scope-only boundary refuses uncommitted but accepts pre-bas
   assert.equal(git(fx.WT, 'show', `${frozen}:scope-only.txt`), 'trusted boundary bytes');
   assert.deepEqual(readState(fx.statePath).tasks.map((t) => t.files), [['src/1.txt'], ['src/']]);
   write(fx.WT, 'scope-only.txt', 'uncommitted scope-only bytes\n');
-  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval }), (err) => {
+  assert.throws(() => crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) }), (err) => {
     assert.match(String(err.stderr), /in-scope files outside task declarations scope-only\.txt/);
     return true;
   });
   write(fx.WT, 'scope-only.txt', 'trusted boundary bytes\n');
-  const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+  const out = crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) });
   assert.deepEqual(out.recorded, [2]);
   assert.equal(out.cleared, true);
   assert.equal(git(fx.WT, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), 'src/2.txt');
@@ -2760,7 +2918,7 @@ for (const committed of [false, true]) {
   test(`cross-attempt: foreign declaration cannot cover sibling A (${committed ? 'committed' : 'uncommitted'})`, async () => {
     const fx = await crossAttemptFixture({ external: true });
     const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
-      result: fx.secondResult, providedReviews: { 2: x22Approval }, policy: dispatchFixture, now: 3000 });
+      result: fx.secondResult, providedReviews: { 2: workingReceipt(fx, 2, x22Approval) }, policy: dispatchFixture, now: 3000 });
     const state = readState(fx.statePath);
     state.tasks[1].files.push(path.join(fx.tmp, 'sibling/src/1.txt'));
     const record = readWaveDispatchRecord(fx.bundleDir, 1);
@@ -2842,7 +3000,7 @@ for (const workerCommittedA of [false, true]) {
     assert.deepEqual(owner.record_outcome.commits.code_by_repo, { [fx.aRepo]: fx.acceptedA });
     assert.equal(x22Events(fx).split('\n').filter(Boolean).map(JSON.parse)
       .filter((e) => e.type === 'task_adversary_review' && e.data.task === 1).length, 1);
-    const out = crossAttemptRecord(fx, fx.secondResult, { 2: x22Approval });
+    const out = crossAttemptRecord(fx, fx.secondResult, { 2: workingReceipt(fx, 2, x22Approval) });
     assert.equal(out.cleared, true);
     assert.equal(out.commits.code_by_repo[fx.aRepo], fx.acceptedA);
   });

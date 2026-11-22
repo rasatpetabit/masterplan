@@ -96,9 +96,14 @@ async function runNativeWave(fx, providedReviews) {
     wave: res.wave,
     tasks: res.plan.tasks.map((t) => ({ task_id: t.task_id, digest: workerDigest(t.task_id, t.files) })),
   };
-  const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, self: fx.self, result, providedReviews, now: 3100,
-  });
+  const args = { statePath: fx.statePath, self: fx.self, result, now: 3100 };
+  if (providedReviews) {
+    const requested = await reviewNativeResult(args);
+    providedReviews = Object.fromEntries((requested.pending_reviews ?? []).filter(({ task_id }) =>
+      Object.hasOwn(providedReviews, task_id)).map(({ task_id, diff_sha }) =>
+      [task_id, { ...providedReviews[task_id], diff_sha }]));
+  }
+  const reviewed = await reviewNativeResult({ ...args, providedReviews });
   const recorded = recordWaveResult({
     statePath: fx.statePath, result: reviewed, self: fx.self, now: 3200,
     worktree: res.plan.tasks[0].cwd,

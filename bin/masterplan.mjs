@@ -234,8 +234,9 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult, preflightNativeRecording, promoteAmendment } from '../lib/wave-commit.mjs';
+import { hasWaveRecording, recordingKey } from '../lib/wave-recording.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
-import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
+import { dispatchWaveViaFabric, reviewNativeResult, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } from '../lib/finish-step.mjs';
 import { finishLocusFacts } from '../lib/finish-loci.mjs';
@@ -4138,16 +4139,17 @@ function main() {
       if (!lockOff) {
         ({ self, now } = resolveOwnerSelf(flags, statePath));
       }
-      // --reconcile (result === null) keeps the synchronous crash-reconcile path:
-      // no digests, no review. A real result goes through the two-phase native review
-      // seam FIRST: phase A emits pending_reviews descriptors (nothing recorded yet);
-      // the orchestrator runs them and re-calls with --reviews-file (phase B ingest).
-      if (result == null) {
+      // Replay a durable recording before touching the review seam. Otherwise a
+      // result goes through Phase A/B; --reconcile retains the legacy tail.
+      if (result != null) delete result.deferred_review_events;
+      const requestKey = result == null ? null : recordingKey({ result, recoverySelector });
+      if (result == null || hasWaveRecording(statePath)) {
         let res;
         try {
           res = recordWaveResult({
             statePath,
             result,
+            requestKey,
             self,
             now,
             skillRoot: resolveInstalledSkillRoot(flags, statePath),
@@ -4177,9 +4179,7 @@ function main() {
       } catch (e) {
         die(e.message);
       }
-      // Only take events emitted in-process by the review projector. A field
-      // on the workflow JSON is never authority for an append, even in recovery.
-      delete result.deferred_review_events;
+      // Only take events emitted in-process by the review projector.
       let nativeReviewEvents = [];
       reviewNativeResult({
         host: cliDispatchHost(flags),
@@ -4212,6 +4212,8 @@ function main() {
           const recRes = recordWaveResult({
             statePath,
             result: reviewedResult,
+            requestKey,
+            finalizeDispatch: true,
             skillRoot: resolveInstalledSkillRoot(flags, statePath),
             self,
             now,
@@ -4222,53 +4224,6 @@ function main() {
             recovery: recoverySelector != null,
             recoverySelector,
           });
-          if (recRes.outcome !== 'recorded') {
-            out(recRes);
-            return;
-          }
-          // Finalize the wave-dispatch record: the native launch persisted it as
-          // 'pending' BEFORE spawn; a successful record-result closes that window so
-          // the next attempt (or crash reconcile) sees 'recorded', not an
-          // in-flight dispatch. Guard-D already serializes this writer.
-          // 'recorded' observes the attempt, not task completion. A persisted
-          // blocking review also ends the attempt, even if no task was accepted.
-          // Refusals leave the record untouched. Accepted failure-only results
-          // retain the A5 pending window with an audit note.
-          try {
-            const waveNo = Number.isInteger(reviewedResult?.wave)
-              ? reviewedResult.wave
-              : readState(statePath)?.active_run?.wave ?? null;
-            const bundleDir = path.dirname(path.resolve(statePath));
-            const existing = Number.isInteger(waveNo) ? readWaveDispatchRecord(bundleDir, waveNo) : null;
-            if (existing && existing.status === 'pending') {
-              if (recRes.recorded.length || recRes.review_rework?.length) {
-                writeWaveDispatchRecord(bundleDir, waveNo, {
-                  ...existing,
-                  status: 'recorded',
-                  completed_at: new Date(now).toISOString(),
-                  record_outcome: {
-                    recorded: recRes.recorded,
-                    failed: recRes.failed,
-                    ...(recRes.blocking_reviews.length ? { blocking_reviews: recRes.blocking_reviews } : {}),
-                    cleared: recRes.cleared,
-                    commits: recRes.commits,
-                  },
-                });
-              } else {
-                // Recorded nothing: leave the record 'pending' (a retry re-drives the
-                // record transaction rather than believing it completed) and surface the
-                // failure on the record itself.
-                writeWaveDispatchRecord(bundleDir, waveNo, {
-                  ...existing,
-                  record_error: {
-                    outcome: recRes.outcome ?? null,
-                    reason: recRes.reason ?? 'record-result recorded no tasks',
-                    recorded: Array.isArray(recRes.recorded) ? recRes.recorded : [],
-                  },
-                });
-              }
-            }
-          } catch { /* record finalization is audit state — never mask the record result */ }
           out(recRes);
         })
         .catch((e) => die(e.message));

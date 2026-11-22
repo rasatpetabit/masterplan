@@ -353,11 +353,13 @@ test('REGRESSION: excluding the heartbeat did not blind the watch to a real MAIN
     result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
   });
 
-  assert.equal(res.watch.ok, false, 'a real MAIN write still fails the wave loud');
+  assert.equal(res.outcome, 'recorded', 'an ordinary watch breach is audit, not a recording refusal');
+  assert.equal(res.watch.ok, false, 'a real MAIN write is still reported');
   assert.ok(
     res.watch.violations.some((v) => String(v.path).includes('child-main.txt')),
     `the offending path is named; got ${JSON.stringify(res.watch.violations)}`,
   );
+  assert.match(fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'), /"type":"watch_list_breach"/);
 });
 
 test('out-of-scope revert: tracked offender restored via checkout, untracked removed via clean; in-scope work stands', () => {
@@ -410,6 +412,44 @@ test('dirty-WT crash reconcile (result:null): no marks, the verify→revert→co
     () => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 3000, result: null }),
     /no active_run/
   );
+});
+
+test('interrupted split code commit resumes the second locus without re-committing the first', () => {
+  const fx = makeFixture({ tasks: [], activeRun: { wave: 1, baseline: [] } });
+  const siblingMain = path.join(fx.tmp, 'external-edit-locus');
+  fs.mkdirSync(siblingMain);
+  git(siblingMain, 'init', '-q', '--initial-branch=main');
+  git(siblingMain, 'config', 'user.email', 'test@test');
+  git(siblingMain, 'config', 'user.name', 'test');
+  git(siblingMain, 'config', 'commit.gpgsign', 'false');
+  git(siblingMain, 'commit', '-q', '--allow-empty', '-m', 'seed');
+  const sibling = path.join(siblingMain, '.worktrees', 't22');
+  git(siblingMain, 'worktree', 'add', '-qb', 'masterplan/t22', sibling);
+  const externalFile = path.join(siblingMain, 'b.txt');
+  const state = readState(fx.statePath);
+  state.active_run.scope = ['src/a.txt', externalFile];
+  state.tasks = state.active_run.scope.map((file, i) => ({ id: i + 1, wave: 1, status: 'pending', files: [file] }));
+  writeState(fx.statePath, state);
+  write(fx.WT, 'src/a.txt', 'A\n');
+  write(sibling, 'b.txt', 'B\n');
+  const secondBase = git(sibling, 'rev-parse', 'HEAD');
+  const hooks = path.join(fx.tmp, '.crash-hooks');
+  write(hooks, 'pre-commit', '#!/bin/sh\necho injected-second-code-commit >&2\nexit 1\n');
+  fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755);
+  git(sibling, 'config', 'core.hooksPath', hooks);
+  const args = { statePath: fx.statePath, self: fx.self, now: 2000 };
+  assert.throws(() => recordWaveResult({ ...args, result: { wave: 1, tasks: [digest(1, 'done'), digest(2, 'done')] } }),
+    /recording interrupted.*injected-second-code-commit/);
+  const first = git(fx.WT, 'rev-parse', 'HEAD');
+  assert.equal(git(fx.WT, 'show', 'HEAD:src/a.txt'), 'A');
+  assert.equal(git(sibling, 'rev-parse', 'HEAD'), secondBase);
+  git(sibling, 'config', '--unset', 'core.hooksPath');
+  const res = recordWaveResult(args);
+  assert.deepEqual(res.recorded, [1, 2]);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), first);
+  assert.equal(git(sibling, 'show', 'HEAD:b.txt'), 'B');
+  assert.deepEqual(res.commits.code_by_repo, { [fx.WT]: first, [sibling]: git(sibling, 'rev-parse', 'HEAD') });
+  assert.equal(res.cleared, true);
 });
 
 test('split-commit isolation: pathspec commits never sweep unrelated staged content in MAIN or the WT', () => {

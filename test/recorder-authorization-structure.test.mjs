@@ -45,11 +45,11 @@ test('recorder mutating entry inventory passes through final authorizeRecording 
           .replaceAll('  return { recovery, recoverySelector, reconciledReviews, episodeRecord };',
             '  globalThis.__recorderGateCount = (globalThis.__recorderGateCount ?? 0) + 1; return { recovery, recoverySelector, reconciledReviews, episodeRecord };');
         let body = source.slice(record, end);
-        body = body.replace('  if (!statePath)', '  const gateStart = globalThis.__recorderGateCount ?? 0;\\n' +
-          '  const beforeWrite = (kind) => { if ((globalThis.__recorderGateCount ?? 0) - gateStart < 2) throw new Error("STRUCTURAL UNAUTHORIZED WRITE: " + kind); fs.appendFileSync(process.env.RECORDER_WRITE_LOG, kind + "\\\\n"); };\\n' +
-          '  const checkedGit = (repo, args) => { if (["add", "commit", "checkout", "clean", "reset"].includes(args[0])) beforeWrite("git:" + args[0]); return runGit(repo, args); };\\n' +
-          '  if (!statePath)');
-        for (const name of ['heartbeatOwner', 'writeState', 'appendEvent']) {
+        body = 'let gateStart;\\n' +
+          'const beforeWrite = (kind) => { if ((globalThis.__recorderGateCount ?? 0) - gateStart < 2) throw new Error("STRUCTURAL UNAUTHORIZED WRITE: " + kind); fs.appendFileSync(process.env.RECORDER_WRITE_LOG, kind + "\\\\n"); };\\n' +
+          'const checkedGit = (repo, args) => { const command = args.find((arg) => !arg.startsWith("-")); if (["add", "commit", "checkout", "clean", "reset"].includes(command)) beforeWrite("git:" + command); return runGit(repo, args); };\\n' +
+          body.replace('  if (!statePath)', '  gateStart = globalThis.__recorderGateCount ?? 0;\\n  if (!statePath)');
+        for (const name of ['heartbeatOwner', 'saveWaveRecording', 'appendRecordingSuffix', 'writeState', 'writeWaveDispatchRecord', 'finishWaveRecording']) {
           body = body.replaceAll(name + '(', '(beforeWrite("' + name + '"), ' + name + ')(');
         }
         body = body.replaceAll('fs.unlinkSync(', '(beforeWrite("unlink"), fs.unlinkSync)(');
