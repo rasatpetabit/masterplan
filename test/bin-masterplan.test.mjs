@@ -26,6 +26,8 @@ function run(args, opts = {}) {
   // developer's live session env. Explicit opts.env still wins.
   const env = {
     ...process.env,
+    // Pre-migration snapshots must be cleaned up with the test, not retained in the real HOME.
+    ...(args[0] === 'migrate-bundle' ? { HOME: tmpDir('mp-migrate-home-') } : {}),
     CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? 'mp-bin-test-hermetic-session',
     PI_CODING_AGENT: undefined, // hermetic non-pi host (the pass-4 review's finding: the pi-host
     // suppression branch routes planning serial — tests asserting non-pi behavior must not see the
@@ -200,7 +202,8 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
   const r = JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout);
   assert.equal(r.migrated, true);
   assert.equal(r.from, '5.0');
-  assert.ok(fs.existsSync(r.backup)); // original preserved verbatim
+  assert.ok(!fs.existsSync(`${p}.v5.0.bak`), 'no sibling backup written');
+  assert.deepEqual(fs.readFileSync(r.backup), fs.readFileSync(SAMPLE));
   const migrated = read(p);
   assert.equal(migrated.schema_version, 8); // canonical v8 schema NUMBER (was string '6.0' — the doctor false-ERROR fix)
   assert.equal(typeof migrated.schema_version, 'number'); // on-disk type the doctor's validateCoreState requires

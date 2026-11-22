@@ -284,9 +284,12 @@ test('wave backfill: wave:null tasks are durably backfilled from plan.index.json
   assert.equal(ask.ask, 'waves-unbackfillable');
 });
 
-test('migrate-on-load: a legacy 5.x bundle is backed up, migrated, written through the CD-7 writer', () => {
-  const legacy = fs.readFileSync(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url), 'utf8');
+test('migrate-on-load: a legacy 5.x bundle is backed up, migrated, written through the CD-7 writer', t => {
+  const legacy = fs.readFileSync(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
   const fx = makeFixture({ tasks: [], slug: 't23legacy' });
+  const home = path.join(fx.tmp, 'home');
+  fs.mkdirSync(home);
+  t.mock.method(os, 'homedir', () => home);
   fs.writeFileSync(fx.statePath, legacy); // overwrite with the raw legacy bundle
 
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
@@ -294,7 +297,11 @@ test('migrate-on-load: a legacy 5.x bundle is backed up, migrated, written throu
   // but the migration itself already happened durably.
   assert.equal(op.op, 'ask');
   assert.equal(op.ask, 'waves-unbackfillable');
-  assert.ok(fs.existsSync(`${fx.statePath}.v5.0.bak`), 'pre-migration backup written');
+  assert.ok(!fs.existsSync(`${fx.statePath}.v5.0.bak`), 'no sibling backup written');
+  const rollback = path.join(home, '.local', 'state', 'masterplan', 'rollback');
+  const [slot] = fs.readdirSync(rollback);
+  const [snapshot] = fs.readdirSync(path.join(rollback, slot));
+  assert.deepEqual(fs.readFileSync(path.join(rollback, slot, snapshot)), legacy);
   assert.equal(readState(fx.statePath).schema_version, 8, 'migrated state written through writeState');
 });
 

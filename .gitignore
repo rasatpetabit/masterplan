@@ -43,6 +43,9 @@ id_ed25519.*
 *.tfvars
 *.tfvars.json
 
+# Pre-migration rollback store, in case HOME is inside this checkout.
+**/.local/state/masterplan/rollback/
+
 # /masterplan runtime telemetry is local-only. Keep generated cost/context
 # sidecars out of commits even when using broad git add commands.
 **/events-archive.jsonl
