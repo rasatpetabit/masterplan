@@ -201,6 +201,7 @@ import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs'
 import { planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection } from '../lib/refs.mjs';
 import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
+import { snapshotBeforeMigration } from '../lib/migration-snapshot.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
@@ -2163,8 +2164,7 @@ function main() {
         if (e instanceof MigrationError) die(e.message);
         throw e;
       }
-      const backup = `${p}.v${v ?? 'legacy'}.bak`;
-      fs.copyFileSync(p, backup); // preserve the original verbatim BEFORE overwriting
+      const backup = snapshotBeforeMigration(p, v);
       writeState(p, migrated);
       out({ migrated: true, from: v, backup });
       break;

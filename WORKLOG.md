@@ -1,5 +1,30 @@
 # WORKLOG
 
+## 2026-11-22 — keep pre-migration snapshots out of run bundles
+
+Intent **serves** Purpose and Top invariant: both migration paths keep the preimage
+recoverable without replacing a historical copy. `mp continue` and `mp migrate-bundle`
+share `lib/migration-snapshot.mjs` and write to `~/.local/state/masterplan/rollback/<key>/`.
+Hashing the canonical bundle directory plus state filename separates unrelated bundles,
+including same-slug bundles in different projects. The UTC stamp orders snapshots across
+schema versions; the UUID avoids collisions. Prune keeps this capture and the two newest
+older captures, matches only its own names, and reports listing, ordering, or unlink failures
+without failing migration. A failed capture stops migration before the rewrite.
+
+The `backup` response field still names the actual file when returned. Historical sibling copies
+and the auditor's exact historical pins are unchanged; `docs/verbs.md` describes the read-only
+fallback. No new path override or dry-run mode was added.
+
+**Verification** (Node v22.23.4, disposable HOME and bundles): the 17 new fixture tests and two
+updated migration checks failed on the detached `b6221d6112` base (19 failures, exit 1) and
+passed on the branch (19 passes, exit 0). `node --test test/{bin-masterplan,continue,migrate}.test.mjs`
+passed all 275 on base; adding `migration-snapshot` on branch passed all 292 (both exit 0, all
+275 shared results matched by test name). `git check-ignore -v` matched root and nested stores.
+The full `node --test test/*.test.mjs` runs both timed out (340s, exit 124), each emitting the
+same 697 passing TAP records before cutoff and no summary. Both used the synthetic C1 map and
+`W=/srv/dev/ai/workflows` at `c1dcc61f017228a5cd2dc59344ac3eeb282269e2`. No install, push,
+deploy, or migration against live state. Independent review is separate from this local commit.
+
 ## 2026-11-10 — skills: Codex AUQ fallback fails closed, never prose
 
 Branch `auq-gates/20261110` (worktree `.worktrees/auq-gates-20261110`), operator-approved AUQ

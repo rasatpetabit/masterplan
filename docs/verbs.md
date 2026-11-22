@@ -73,6 +73,14 @@ Migrate legacy planning artifacts into a v8 run bundle (`mp migrate-bundle`, bac
 original). On a pre-5.0 refusal the legacy bundle is treated as read-only (CD-7) and you seed
 a fresh one rather than rewriting it.
 
+Both `mp migrate-bundle` and migration on `mp continue` keep three snapshots per state file
+under `~/.local/state/masterplan/rollback/<key>/`. The key is the SHA-256 of the absolute
+state path with its parent directory resolved through symlinks. Snapshot names are
+`state.yml.v<version>.<YYYYMMDDTHHmmss.sssZ>-<uuid>` (`vunknown` if the version cannot be read).
+Use the `backup` path returned by `mp migrate-bundle` or a `legacy-refused` continue result
+when available. For older runs, read the unchanged `state.yml.v<version>.bak` beside the
+original (`state.yml.vunknown.bak` for an unversioned continue refusal).
+
 ## `doctor`
 Run the health checks — `node bin/doctor.mjs` over the `lib/doctor/*.mjs` modules — against the
 repo + active bundles. Report-only by default; `--fix` applies the safe auto-fixes.
