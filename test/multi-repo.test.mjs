@@ -320,3 +320,34 @@ test('mapUmbrellaPathsToRepos: a directory scope keeps its trailing slash in eve
   assert.deepEqual(m.get('/sib-wt'), ['kas/']);
   assert.deepEqual(m.get('/ext/.worktrees/s'), ['bindings/go/generated/']);
 });
+
+test('captureMultiRepoFiles: empty success, optional missing locus, and failed capture stay distinct', () => {
+  const { MAIN, WT, slug } = makeUmbrellaFixture({ withSiblingWt: false });
+  const opts = { worktree: WT, mainRoot: MAIN, slug };
+  assert.deepEqual(captureMultiRepoFiles([], { ...opts, captureWtFiles: () => [] }), []);
+
+  const seen = [];
+  const skipped = captureMultiRepoFiles(['yanos-os/kas/yanos-z9264f.yaml'], {
+    ...opts,
+    allowMissingLoci: true,
+    captureWtFiles: (repo) => { seen.push(path.resolve(repo)); return []; },
+  });
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(seen, [path.resolve(WT)], 'a missing optional sibling locus is not captured');
+
+  assert.throws(() => captureMultiRepoFiles(['yanos-os/kas/yanos-z9264f.yaml'], {
+    ...opts,
+    captureWtFiles: () => [],
+  }), /does not exist/);
+
+  assert.throws(() => captureMultiRepoFiles(['docs/a.md'], {
+    ...opts,
+    captureWtFiles: () => { throw new Error('git status failed'); },
+  }), /git status failed/);
+
+  assert.throws(() => captureMultiRepoFiles(['/no/such/anchor/file.txt'], {
+    ...opts,
+    allowMissingLoci: true,
+    captureWtFiles: () => [],
+  }), /not a git repository|resolveFileLocus|fatal|rev-parse/i);
+});

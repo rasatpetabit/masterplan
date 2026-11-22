@@ -206,3 +206,35 @@ test('writeHeartbeat never touches .owner.lock (the double-ownership guard)', ()
   writeHeartbeat(dir, A(), 9999, fs);
   assert.equal(fs.readFileSync(ownerLockPath(dir), 'utf8'), lockBefore);
 });
+
+test('omitted now uses wall-clock milliseconds; explicit now: 0 stays deterministic', () => {
+  const dir = tmpBundle();
+  const before = Date.now();
+  const acquired = acquireOwner(dir, A(before));
+  const after = Date.now();
+  assert.equal(acquired.outcome, 'acquire');
+  const hb = readLastHeartbeat(dir, readIncumbent(dir), fs);
+  assert.ok(hb >= before && hb <= after, `omitted acquire now wrote ${hb}, want wall clock`);
+
+  const pinned = tmpBundle();
+  assert.equal(acquireOwner(pinned, A(0), { now: 0 }).outcome, 'acquire');
+  assert.equal(readLastHeartbeat(pinned, readIncumbent(pinned), fs), 0);
+  assert.equal(heartbeatOwner(pinned, A(0), { now: 0 }).outcome, 'held-by-self');
+  assert.equal(readLastHeartbeat(pinned, readIncumbent(pinned), fs), 0);
+
+  const beatBefore = Date.now();
+  const beat = heartbeatOwner(dir, A(before));
+  const beatAfter = Date.now();
+  assert.equal(beat.outcome, 'held-by-self');
+  const refreshed = readLastHeartbeat(dir, readIncumbent(dir), fs);
+  assert.ok(refreshed >= beatBefore && refreshed <= beatAfter,
+    `omitted heartbeat now wrote ${refreshed}, want wall clock`);
+});
+
+test('an acquire that omits now is not immediately stealable', () => {
+  const dir = tmpBundle();
+  acquireOwner(dir, A(Date.now()));
+  const r = acquireOwner(dir, B(Date.now()), { now: Date.now() });
+  assert.equal(r.outcome, 'blocked');
+  assert.equal(readIncumbent(dir).session, 'sess-A');
+});

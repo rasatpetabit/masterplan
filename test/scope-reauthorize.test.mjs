@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { recordWaveResult, captureWtFiles, captureWorkspaceRoot } from '../lib/wave-commit.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
-import { acquireOwner } from '../lib/owner-fs.mjs';
-import { buildOwnerIdentity } from '../lib/owner.mjs';
+import { acquireOwner, readIncumbent } from '../lib/owner-fs.mjs';
+import { buildOwnerIdentity, ownerLockPath } from '../lib/owner.mjs';
 import { preflightRecovery } from '../lib/recovery-preflight.mjs';
 import { composeWaveDispatchKey } from '../lib/dispatch-wave.mjs';
 const cli = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
@@ -337,4 +337,124 @@ test('committed recovery reports amended scope as a violation without writes', (
   assert.equal(recorded.outcome, 'recovery-preservation-violation');
   assert.match(recorded.violations.join('\n'), /scope-amended-after-launch.*src\/b/);
   assert.deepEqual(snapshot(fx), before);
+});
+
+function enableOwnerLock(fx) {
+  const state = readState(fx.statePath);
+  delete state.concurrency;
+  writeState(fx.statePath, state);
+}
+function holdSession(fx) {
+  enableOwnerLock(fx);
+  const now = Date.now();
+  const self = buildOwnerIdentity({ host: 'test', session: 'test', slug: 'scope', now });
+  assert.equal(acquireOwner(fx.bundle, self, { now }).outcome, 'acquire');
+  return now;
+}
+const ownerArgs = (now) => ['--session=test', '--host=test', '--now=' + (now + 10), '--ttl-ms=600000'];
+function writeOwnerHook(dir) {
+  const hooks = path.join(dir, 'toctou-hooks.mjs');
+  const register = path.join(dir, 'register-toctou.mjs');
+  fs.writeFileSync(hooks, `export async function load(url, context, nextLoad) {
+  const result = await nextLoad(url, context);
+  if (!url.endsWith('/lib/owner-fs.mjs')) return result;
+  const source = Buffer.isBuffer(result.source) ? result.source.toString('utf8') : String(result.source ?? '');
+  if (!source.includes('export function acquireOwner(') || !source.includes('export function heartbeatOwner(')) {
+    throw new Error('toctou hook: owner-fs exports not found');
+  }
+  const next = source
+    .replace('export function acquireOwner(', 'export function acquireOwnerUnhooked(')
+    .replace('export function heartbeatOwner(', 'export function heartbeatOwnerUnhooked(')
+    + \`
+export function acquireOwner(...args) {
+  const statePath = process.env.MP_TOCTOU_STATE;
+  if (statePath) {
+    const text = fs.readFileSync(statePath, 'utf8');
+    const nl = String.fromCharCode(10);
+    if (!text.includes('toctou_marker:')) {
+      fs.writeFileSync(statePath, text + (text.endsWith(nl) ? '' : nl) + 'toctou_marker: landed-inside-lock' + nl);
+    }
+  }
+  return acquireOwnerUnhooked(...args);
+}
+export function heartbeatOwner(...args) {
+  if (process.env.MP_HEARTBEAT_LOST === '1') {
+    return { outcome: 'lost-to-other', reason: 'injected lost lock before mutation' };
+  }
+  return heartbeatOwnerUnhooked(...args);
+}
+\`;
+  return { format: result.format, source: next, shortCircuit: true };
+}
+`);
+  fs.writeFileSync(register, `import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+register(pathToFileURL(${JSON.stringify(hooks)}), import.meta.url);
+`);
+  return register;
+}
+function spawnHooked(fx, args, env) {
+  return spawnSync(process.execPath, ['--import', writeOwnerHook(fx.tmp), cli, ...args, '--state=' + fx.statePath], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+for (const verb of ['amend-plan', 'amend-tasks']) test(verb + ' keeps a session lock this call did not acquire', () => {
+  const fx = fixture();
+  const now = holdSession(fx);
+  const args = verb === 'amend-plan' ? ['--summary=keep the lock'] : ['--plan-index=' + fx.index];
+  const res = fx.mp(verb, ...args, ...ownerArgs(now));
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(readIncumbent(fx.bundle)?.session, 'test');
+  assert.equal(fs.existsSync(ownerLockPath(fx.bundle)), true);
+});
+
+test('reauthorize-scope keeps a session lock this call did not acquire', () => {
+  const fx = fixture();
+  legacyAmend(fx);
+  const now = holdSession(fx);
+  const res = fx.mp('reauthorize-scope', '--wave=1', '--reason=keep the lock', ...ownerArgs(now));
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(readIncumbent(fx.bundle)?.session, 'test');
+});
+
+test('amend-plan --force still writes over a live foreign lock and drops the one-shot takeover', () => {
+  const fx = fixture();
+  enableOwnerLock(fx);
+  const now = Date.now();
+  const foreign = buildOwnerIdentity({ host: 'foreign', session: 'foreign', slug: 'scope', now });
+  assert.equal(acquireOwner(fx.bundle, foreign, { now }).outcome, 'acquire');
+  const res = fx.mp('amend-plan', '--summary=forced widen', '--session=me', '--host=me',
+    '--now=' + (now + 10), '--ttl-ms=600000', '--force');
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(fs.readFileSync(path.join(fx.bundle, 'plan.md'), 'utf8'), /forced widen/);
+  assert.equal(fs.existsSync(ownerLockPath(fx.bundle)), false);
+});
+
+for (const verb of ['amend-plan', 'amend-tasks', 'reauthorize-scope']) {
+  test(verb + ' mutates the post-lock state, not the pre-lock snapshot', () => {
+    const fx = fixture();
+    if (verb === 'reauthorize-scope') legacyAmend(fx);
+    const now = holdSession(fx);
+    const args = verb === 'amend-plan' ? ['--summary=post-lock widen']
+      : verb === 'amend-tasks' ? ['--plan-index=' + fx.index]
+      : ['--wave=1', '--reason=post-lock widen'];
+    const res = spawnHooked(fx, [verb, ...args, ...ownerArgs(now)], { MP_TOCTOU_STATE: fx.statePath });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(readState(fx.statePath).toctou_marker, 'landed-inside-lock');
+    assert.ok(readState(fx.statePath).active_run.scope.includes('src/'), res.stdout);
+    assert.equal(readIncumbent(fx.bundle)?.session, 'test');
+  });
+}
+
+test('scope writers refuse to mutate when heartbeat does not confirm ownership', () => {
+  const fx = fixture();
+  const now = holdSession(fx);
+  const before = fs.readFileSync(path.join(fx.bundle, 'plan.md'), 'utf8');
+  const res = spawnHooked(fx, ['amend-plan', '--summary=must not land', ...ownerArgs(now)], { MP_HEARTBEAT_LOST: '1' });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /lost-to-other|not confirmed|injected lost lock/);
+  assert.equal(fs.readFileSync(path.join(fx.bundle, 'plan.md'), 'utf8'), before);
+  assert.equal(readIncumbent(fx.bundle)?.session, 'test');
 });

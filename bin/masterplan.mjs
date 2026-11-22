@@ -1355,12 +1355,28 @@ function readText(p) {
 // Scope writers follow amend-plan's acquire/hold/release convention. Validation
 // is read-only and precedes acquisition; explicit owner_lock=off stays supported.
 function withScopeOwner(p, state, flags, mutate) {
-  if (state.concurrency?.owner_lock === 'off') return mutate();
+  if (state.concurrency?.owner_lock === 'off') return mutate(state);
   const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
-  const acq = acquireOwner(bundleDir, self, { now, ttlMs });
-  if (acq.outcome === 'blocked') throw new Error('scope amendment: bundle is owned by another session — nothing written');
-  try { return mutate(); }
-  finally { releaseOwner(bundleDir, self, { now, ttlMs }); }
+  const acq = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
+  if (acq.outcome === 'blocked') {
+    const inc = acq.incumbent || {};
+    throw new Error(`scope amendment: bundle is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`);
+  }
+  // Release only a lock this call took. held-by-self belongs to the live session and
+  // must not be dropped mid-wave. force is a one-shot takeover, released like acquire/steal.
+  // owner-fs spells these 'acquire' and 'steal', not 'acquired'/'stolen'.
+  const tookLock = acq.outcome === 'acquire' || acq.outcome === 'steal' || acq.outcome === 'force';
+  try {
+    const hb = heartbeatOwner(bundleDir, self, { now });
+    if (hb.outcome !== 'held-by-self') {
+      throw new Error(`scope amendment: owner lock not confirmed (${hb.outcome}${hb.reason ? `: ${hb.reason}` : ''}) — nothing written`);
+    }
+    return mutate(readState(p));
+  } finally {
+    if (tookLock) {
+      try { releaseOwner(bundleDir, self, { now, ttlMs }); } catch { /* best-effort */ }
+    }
+  }
 }
 
 function loadForWrite(p) {
@@ -2201,32 +2217,44 @@ function main() {
       const planIndex = JSON.parse(readText(need(flags, 'plan-index')));
       const prune = flags.prune === true;
       const pruneNonPending = flags['prune-non-pending'] === true;
-      let up;
+      const stuckMessage = (tasks) => {
+        const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
+        if (!stuck.length) return null;
+        return `amend-tasks: ${stuck.length} task(s) still have no integer wave after upsert ` +
+          `(ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch, missing wave/parallel_group, ` +
+          `or a non-integer wave value in plan.index.json.`;
+      };
+      // Validate before the lock so a refusal holds nothing. Recompute inside the lock
+      // against the post-acquire state; the preview is not what gets written.
+      let preview;
       try {
-        up = upsertTasks(state, planIndex, { prune, pruneNonPending });
+        preview = upsertTasks(state, planIndex, { prune, pruneNonPending });
       } catch (e) {
         die(`amend-tasks: ${e.message}`, 1); // duplicate-id reject / prune-non-pending refusal
       }
-      const tasks = up.state.tasks ?? [];
-      // Wave-less stuck-guard (mirror of backfill-waves): don't report success while a non-done task
-      // remains wave-less — decide would throw on the next resume. Fail loud BEFORE writing.
-      const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
-      if (stuck.length) {
-        die(`amend-tasks: ${stuck.length} task(s) still have no integer wave after upsert ` +
-            `(ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch, missing wave/parallel_group, ` +
-            `or a non-integer wave value in plan.index.json.`, 1);
+      const previewStuck = stuckMessage(preview.state.tasks ?? []);
+      if (previewStuck) die(previewStuck, 1);
+      let up;
+      try {
+        up = withScopeOwner(p, state, flags, (fresh) => {
+          if (fresh.status === 'archived') throw new Error('amend-tasks: bundle is archived');
+          const freshUp = upsertTasks(fresh, planIndex, { prune, pruneNonPending });
+          const freshStuck = stuckMessage(freshUp.state.tasks ?? []);
+          if (freshStuck) throw new Error(freshStuck);
+          const ts = flags.ts ?? new Date().toISOString();
+          const widened = freshUp.state.active_run?.scope
+            ? widenActiveScope(freshUp.state, scopeContext(p, freshUp.state), 'amend-tasks') : null;
+          const event = { type: 'tasks_amended', ts, task_files: taskFilesEvidence(freshUp.state),
+            ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'tasks_amended', ts } } } : {}) };
+          // Audit first: an interrupted state write may leave a recoverable stale
+          // scope, but must never leave a widened allow-set with no amendment proof.
+          appendEvent(p, event);
+          writeState(p, widened?.state ?? freshUp.state);
+          return freshUp;
+        });
+      } catch (e) {
+        die(e.message, 1);
       }
-      const ts = flags.ts ?? new Date().toISOString();
-      const widened = up.state.active_run?.scope
-        ? widenActiveScope(up.state, scopeContext(p, up.state), 'amend-tasks') : null;
-      const event = { type: 'tasks_amended', ts, task_files: taskFilesEvidence(up.state),
-        ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'tasks_amended', ts } } } : {}) };
-      withScopeOwner(p, state, flags, () => {
-        // Audit first: an interrupted state write may leave a recoverable stale
-        // scope, but must never leave a widened allow-set with no amendment proof.
-        appendEvent(p, event);
-        writeState(p, widened?.state ?? up.state);
-      });
       // Inline render-freshness AFTER the commit (mirror amend-plan): no-op when plan.html is absent,
       // never throws (WARNs + returns false on failure so the mutation stands durable).
       let renderOk = true;
@@ -2367,8 +2395,9 @@ function main() {
       // owns the PURE section writer (no fs/clock); this case owns the fs/clock/event/render I/O:
       //   (a) BASE — parse --summary/--detail, inject the ISO date (purity: no clock in the writer), call
       //       amendPlan, write plan.md (tmp+rename), append the plan_amended {summary} event LAST (commit).
-      //   (b) GUARD-D — acquire the bundle owner lock BEFORE the mutation, release on EVERY exit path; a LIVE
-      //       foreign owner exits non-zero writing nothing (another live session may own this bundle).
+      //   (b) GUARD-D — withScopeOwner acquires BEFORE the mutation. A live foreign owner exits
+      //       non-zero writing nothing. A lock this call took is released; an existing held-by-self
+      //       session lock is left in place. owner_lock=off skips the lock. --force stays a one-shot takeover.
       //   (c) RENDER — after the plan.md/event commit, re-render an EXISTING plan.html inline; a render
       //       failure WARNs (naming the stale bundle) and exits non-zero while the mutation stands durable.
       const p = need(flags, 'state');
@@ -2390,46 +2419,45 @@ function main() {
       // Validate the mutation BEFORE taking the lock — a refusal holds no lock and writes nothing.
       const amended = amendPlan({ planText, summary, detail, date: amendDate, archived: state.status === 'archived' });
       if (!amended.ok) die(`amend-plan: ${amended.error}`, 1);
-      // A controller amendment attests the current indexed files of active-wave tasks.
-      // Do not silently refresh other task state (amend-tasks owns that wider upsert).
-      let nextState = state;
-      if (Number.isInteger(state.active_run?.wave)) {
-        const indexPath = flags['plan-index'] ?? state.plan_index_path ?? path.join(dir, 'plan.index.json');
-        if (fs.existsSync(indexPath)) {
-          const index = JSON.parse(readText(indexPath));
-          const up = upsertTasks(state, index).state;
-          nextState = { ...state, tasks: (state.tasks ?? []).map(t => t.wave === state.active_run.wave
-            ? { ...t, files: up.tasks.find(u => String(u.id) === String(t.id))?.files ?? t.files } : t) };
-        }
+      // Validate the index before the lock so a refusal holds nothing. The write below
+      // recomputes task files and scope from the post-lock state.
+      const indexPath = flags['plan-index'] ?? state.plan_index_path ?? path.join(dir, 'plan.index.json');
+      if (Number.isInteger(state.active_run?.wave) && fs.existsSync(indexPath)) {
+        upsertTasks(state, JSON.parse(readText(indexPath)));
       }
       const ts = flags.ts ?? new Date().toISOString();
-      const widened = nextState.active_run?.scope
-        ? widenActiveScope(nextState, scopeContext(p, nextState), summary) : null;
-      const event = { ...amended.event, ts, task_files: taskFilesEvidence(nextState),
-        ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'plan_amended', ts } } } : {}) };
-      // Guard-D: hold the bundle owner lock across the mutation. A LIVE foreign owner -> die non-zero,
-      // nothing written. All dieable validation is ABOVE this point (process.exit skips the finally).
-      const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
-      try { fs.mkdirSync(bundleDir, { recursive: true }); } catch { /* exists/unwritable — acquire surfaces it */ }
-      const acq = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
-      if (acq.outcome === 'blocked') {
-        const inc = acq.incumbent || {};
-        die(`amend-plan: bundle ${p} is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`, 1);
-      }
       let renderOk = true;
       try {
-        // Plan artifact first, then amendment audit, then atomic state replacement.
-        // A crash cannot install a widened scope without its authorization event.
-        const planMdTmp = planMdPath + '.tmp';
-        fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
-        fs.renameSync(planMdTmp, planMdPath);
-        appendEvent(p, event);
-        if (nextState !== state || widened) writeState(p, widened?.state ?? nextState);
-        // Inline render-freshness AFTER the commit — reuses the shared plan.html re-render helper, which is
-        // a no-op when plan.html is absent and NEVER throws (WARNs + returns false on failure).
-        if (!rerenderRefsHtml(p, 'amend-plan')) renderOk = false;
-      } finally {
-        try { releaseOwner(bundleDir, self, { now, ttlMs }); } catch { /* best-effort */ }
+        renderOk = withScopeOwner(p, state, flags, (fresh) => {
+          if (fresh.status === 'archived') {
+            throw new Error('refusing to amend: the bundle is archived (the run is closed)');
+          }
+          // A controller amendment attests the current indexed files of active-wave tasks.
+          // Do not silently refresh other task state (amend-tasks owns that wider upsert).
+          let nextState = fresh;
+          if (Number.isInteger(fresh.active_run?.wave) && fs.existsSync(indexPath)) {
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+            const up = upsertTasks(fresh, index).state;
+            nextState = { ...fresh, tasks: (fresh.tasks ?? []).map(t => t.wave === fresh.active_run.wave
+              ? { ...t, files: up.tasks.find(u => String(u.id) === String(t.id))?.files ?? t.files } : t) };
+          }
+          const widened = nextState.active_run?.scope
+            ? widenActiveScope(nextState, scopeContext(p, nextState), summary) : null;
+          const event = { ...amended.event, ts, task_files: taskFilesEvidence(nextState),
+            ...(widened ? { scope_reauthorization: { ...widened.audit, amendment: { type: 'plan_amended', ts } } } : {}) };
+          // Plan artifact first, then amendment audit, then atomic state replacement.
+          // A crash cannot install a widened scope without its authorization event.
+          const planMdTmp = planMdPath + '.tmp';
+          fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
+          fs.renameSync(planMdTmp, planMdPath);
+          appendEvent(p, event);
+          if (nextState !== fresh || widened) writeState(p, widened?.state ?? nextState);
+          // Inline render-freshness AFTER the commit — reuses the shared plan.html re-render helper, which is
+          // a no-op when plan.html is absent and NEVER throws (WARNs + returns false on failure).
+          return rerenderRefsHtml(p, 'amend-plan');
+        });
+      } catch (e) {
+        die(`amend-plan: ${e.message}`, 1);
       }
       out({ amend_plan: 'amended', summary: amended.event.summary });
       if (!renderOk) process.exit(1);
@@ -2728,12 +2756,22 @@ function main() {
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       if (state.status === 'archived') die('reauthorize-scope: bundle is archived');
-      const widened = reauthorizeScope({ statePath: p, state, wave: coerceId(need(flags, 'wave')),
-        reason: String(need(flags, 'reason')) });
-      withScopeOwner(p, state, flags, () => {
-        appendEvent(p, { ...widened.event, ts: flags.ts ?? new Date().toISOString() });
-        writeState(p, widened.state);
-      });
+      const wave = coerceId(need(flags, 'wave'));
+      const reason = String(need(flags, 'reason'));
+      // Refusal holds no lock. The write is recomputed from the post-lock state.
+      reauthorizeScope({ statePath: p, state, wave, reason });
+      let widened;
+      try {
+        widened = withScopeOwner(p, state, flags, (fresh) => {
+          if (fresh.status === 'archived') throw new Error('reauthorize-scope: bundle is archived');
+          const next = reauthorizeScope({ statePath: p, state: fresh, wave, reason });
+          appendEvent(p, { ...next.event, ts: flags.ts ?? new Date().toISOString() });
+          writeState(p, next.state);
+          return next;
+        });
+      } catch (e) {
+        die(e.message, 1);
+      }
       out({ outcome: 'scope-reauthorized', ...widened.audit });
       break;
     }

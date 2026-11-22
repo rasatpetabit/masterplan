@@ -12,10 +12,13 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { reviewNativeResult, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
 import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, workspaceRootFor } from '../lib/watch-integrity.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+
+const recoveryDispatchPolicy = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -1214,4 +1217,80 @@ test('record-result on a bundle with no goals emits the wave line alone', () => 
   const res = recordOneCleanWave(fx);
   assert.equal(res.summary.length, 1, JSON.stringify(res.summary));
   assert.equal(res.goals_reminder.line, null);
+});
+
+test('boundRecovery.repo is path.resolve normalized so code_by_repo matches later baseline lookup', async () => {
+  const slug = 'recovery-key';
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wavecommit-'));
+  const MAIN = path.join(tmp, 'main');
+  fs.mkdirSync(MAIN, { recursive: true });
+  git(MAIN, 'init', '--initial-branch=main');
+  git(MAIN, 'config', 'user.email', 'test@test');
+  git(MAIN, 'config', 'user.name', 'test');
+  git(MAIN, 'config', 'commit.gpgsign', 'false');
+  write(MAIN, 'src/seed.txt', 'seed\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'initial');
+  const BASE = git(MAIN, 'rev-parse', 'HEAD');
+  write(MAIN, 'src/a.txt', 'recovered change\n');
+  write(MAIN, 'src/seed.txt', 'seed updated\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'recovered wave work');
+  const HEAD = git(MAIN, 'rev-parse', 'HEAD');
+  const WT = path.join(MAIN, '.worktrees', slug);
+  git(MAIN, 'worktree', 'add', '-q', WT, 'HEAD');
+  const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
+  const statePath = path.join(bundleDir, 'state.yml');
+  writeState(statePath, {
+    schema_version: 8, slug, status: 'in-progress', phase: 'execute', worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: { wave: 1, run_id: slug, task_id: 'wf1', epoch: 5, scope: ['src/a.txt', 'src/seed.txt'], baseline: [] },
+    dispatch: { fabric: true }, review: { adversary: true }, concurrency: { owner_lock: 'off' },
+  });
+  write(bundleDir, 'plan.index.json', JSON.stringify({
+    tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
+  }));
+  writeWaveDispatchRecord(bundleDir, 1, {
+    key: `mp-wave-dispatch-v1:${slug}:1:dispatch_fabric`, run_id: slug, wave: 1, op: 'dispatch_fabric',
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 2,
+    wave_token: `mp-wave-${slug}-w1-a2`, handles: [], dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    review_context: {
+      enabled: true, base_sha: BASE,
+      episodes: { 1: { subject: `${MAIN}::docs/masterplan/${slug}/wave-1/task-1` } },
+      tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
+    },
+  });
+  git(WT, 'checkout', '-q', '--detach', BASE);
+  writeWatchBaseline(bundleDir, 1, captureWatchBaseline({
+    mainRoot: MAIN, bundleDir, worktree: WT, slug, scopePaths: ['src/a.txt', 'src/seed.txt'],
+  }));
+  git(WT, 'checkout', '-q', '--detach', HEAD);
+  const spelled = `${WT}/.`;
+  assert.notEqual(spelled, path.resolve(spelled));
+  const self = buildOwnerIdentity({ host: 'h1', session: 'sess-recovery', slug, now: 1000 });
+  const result = { wave: 1, epoch: 5, tasks: [{ task_id: 1, digest: {
+    task_id: 1, status: 'done', start_sha: 'abc123', files_changed: [], verify: [], summary: 'task 1 done', blockers: null,
+  } }] };
+  const selector = { repo: spelled, head: HEAD };
+  const pending = await reviewNativeResult({
+    statePath, result, self, providedReviews: null, policy: recoveryDispatchPolicy, now: 3000, recoverySelector: selector,
+  });
+  const reviewed = await reviewNativeResult({
+    statePath, self, result, policy: recoveryDispatchPolicy, now: 4000, recoverySelector: selector,
+    providedReviews: { 1: {
+      final_verdict: 'approve', findings: [{ severity: 'major', summary: 'approve finding' }],
+      blocking_findings: [], summary: 'approve summary',
+      harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false,
+        regions_unreviewed: 0, extraction_degraded: false },
+      identity: pending.pending_reviews[0].identity,
+    } },
+  });
+  const res = recordWaveResult({
+    statePath, result: reviewed, self, now: 4000, worktree: WT,
+    deferredEvents: reviewed.deferred_review_events, recovery: true, recoverySelector: selector,
+  });
+  assert.equal(res.outcome, 'recorded', JSON.stringify(res));
+  assert.equal(res.commits.code_by_repo[path.resolve(WT)], HEAD);
+  assert.deepEqual(Object.keys(res.commits.code_by_repo), [path.resolve(WT)]);
 });
