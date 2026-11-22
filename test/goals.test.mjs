@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeIntent, encodeIntentBlock, INTENT_CODEC_VERSION, parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, INTENT_VERDICTS, validateUserApprovalReceipt, validateGoalCheckReceipt, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { decodeIntent, encodeIntentBlock, INTENT_CODEC_VERSION, parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, preCodeMaskGoalsHash, INTENT_VERDICTS, validateUserApprovalReceipt, validateGoalCheckReceipt, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -51,6 +51,38 @@ test('bare topic without a blank separator stops at the Intent heading', () => {
   assert.equal(parsed.topicSeed, 'Build X');
   assert.equal(parsed.intent.outcome, 'actual');
   assert.deepEqual(parsed.goals.map((g) => g.text), ['Real goal']);
+});
+
+test('preCodeMaskGoalsHash keeps the pre-fix hash for a fenced heading inside a block topic', () => {
+  // The heading is unindented, so the pre-mask parser treats it as the block terminator.
+  // The live parser masks the fence and keeps the heading as request text.
+  const md = [
+    'topic: |',
+    'Build X',
+    '```markdown',
+    '## G1: sample heading',
+    '```',
+    'Keep this too',
+    '## Intent',
+    'outcome: actual',
+    '## G1: Real goal',
+  ].join('\n');
+  const before = preCodeMaskGoalsHash(md);
+  assert.ok(before, 'a fenced heading inside topic: | is a migration');
+  assert.notEqual(before, goalsHash(parseGoals(md)));
+  assert.equal(parseGoals(md).topicSeed.includes('## G1: sample heading'), true);
+  assert.equal(parseGoals(md, { preCodeMask: true }).topicSeed.includes('## G1: sample heading'), false);
+});
+
+test('preCodeMaskGoalsHash keeps the pre-fix hash when a bare topic runs into ## Intent', () => {
+  const md = 'topic: Build X\n## Intent\noutcome: actual\n## G1: Real goal\n';
+  const before = preCodeMaskGoalsHash(md);
+  assert.ok(before, 'stopping a bare topic on ## Intent is a migration');
+  assert.notEqual(before, goalsHash(parseGoals(md)));
+  assert.equal(parseGoals(md).topicSeed, 'Build X');
+  assert.equal(parseGoals(md).intent.outcome, 'actual');
+  assert.match(parseGoals(md, { preCodeMask: true }).topicSeed, /## Intent/);
+  assert.equal(parseGoals(md, { preCodeMask: true }).intent, null);
 });
 
 test('an indented code heading inside Intent does not hide its schema codec block', () => {

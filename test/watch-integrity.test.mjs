@@ -27,6 +27,7 @@ import {
   readWatchBaseline,
   MAIN_TRANSACTION_FILES,
   CONTROLLER_STATE_KEYS,
+  verifyWatchListDelta,
 } from '../lib/watch-integrity.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
@@ -272,4 +273,36 @@ test('CONTROLLER_STATE_KEYS: excludes non-transaction keys', () => {
   assert.ok(!CONTROLLER_STATE_KEYS.has('slug'));
   assert.ok(!CONTROLLER_STATE_KEYS.has('refs'));
   assert.ok(!CONTROLLER_STATE_KEYS.has('plan_index_path'));
+});
+
+test('deleting a pending task from state.yml mid-wave is controller tamper', () => {
+  const repo = mkdtempTracked(path.join(os.tmpdir(), 'mp-watch-delete-'));
+  const bundleDir = path.join(repo, 'docs', 'masterplan', 'slug');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const stateText = (tasks) => [
+    'schema_version: "8.0"',
+    'slug: slug',
+    'status: active',
+    'phase: execute',
+    'tasks: ' + JSON.stringify(tasks),
+    'active_run: {"wave":1}',
+    '',
+  ].join('\n');
+  const beforeText = stateText([
+    { id: 1, status: 'pending' },
+    { id: 2, status: 'pending' },
+  ]);
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), stateText([{ id: 1, status: 'pending' }]));
+  const snap = { repo, head: 'aaa', isMain: true, entries: {} };
+  const watch = verifyWatchListDelta(
+    { [repo]: snap },
+    { [repo]: { ...snap } },
+    [],
+    { bundle: { bundleDir, stateText: beforeText } },
+  );
+  const stateViolation = watch.violations.find((v) => String(v.path).endsWith('state.yml'));
+  assert.ok(stateViolation, JSON.stringify(watch));
+  assert.match(stateViolation.reason, /task 2 was removed during the wave/);
+  assert.equal(stateViolation.controllerTamper, true);
+  assert.equal(watch.ok, false);
 });

@@ -114,6 +114,24 @@ describe('reviewCompletedTasks', () => {
     assert.match(events, /"review":\{"verdict":"approve"/);
   });
 
+  it('reuses a fresh non-deferred review for a duplicate key in the same batch', async () => {
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-dup-'));
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
+    const item = { task_id: 7, digest: { task_id: 7, status: 'done' }, review_input: reviewInput() };
+    let calls = 0;
+    const items = await reviewCompletedTasks({
+      statePath, runId: 'run-1', wave: 2, baseSha: 'base', now: 1000,
+      items: [item, { ...item }],
+      callReview: async () => { calls += 1; return record('approve'); },
+    });
+    assert.equal(calls, 1, 'the second item must see the receipt appended for the first');
+    assert.equal(items[0].review.verdict, 'approve');
+    assert.equal(items[1].review.verdict, 'approve');
+    const lines = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+  });
+
   it('reuses a completed event for the same run task and payload sha', async () => {
     const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-reuse-'));
     const statePath = path.join(dir, 'state.yml');

@@ -412,6 +412,7 @@ for (const [name, forge, reason, refusal = /controller state tamper.*state\.yml/
   ['newly added done task', st => { st.tasks.push({ id: 3, status: 'done', wave: 1 }); }, /task 3.*done/],
   ['illegal top-level key', st => { st.goals = ['forged']; }, /changed fields.*goals/],
   ['malformed task state', st => { st.tasks = '[broken'; }, /no longer parses.*tasks/],
+  ['deleted pending task', st => { st.tasks = st.tasks.filter((t) => t.id !== 2); }, /task 2 was removed/],
 ]) {
   test('controller state tamper: ' + name + ' is flagged and recording writes nothing', () => {
     const fx = watchedRecordingFixture(name === 'forged task 2 done' ? 'worktree' : 'main');

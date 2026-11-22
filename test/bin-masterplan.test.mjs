@@ -3401,6 +3401,68 @@ test('mp continue STOPS when the repo root cannot be derived, rather than using 
   assert.match(r.stderr, /planning mode could not be resolved/);
 });
 
+test('mp status and mp runs report completion_class only for archived bundles', () => {
+  const root = tmpDir('mp-completion-class-');
+  execFileSync('git', ['init', '-q', root]);
+  const writeBundle = (slug, state) => {
+    const dir = path.join(root, 'docs', 'masterplan', slug);
+    fs.mkdirSync(dir, { recursive: true });
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, serializeState({
+      schema_version: '8.0', slug, phase: 'execute', tasks: [], pending_gate: null, active_run: null,
+      concurrency: { owner_lock: 'off' },
+      ...state,
+    }));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+    return statePath;
+  };
+  const active = writeBundle('active-run', { status: 'in-progress', completion: 'complete' });
+  const archived = writeBundle('archived-run', { status: 'archived', completion: 'complete' });
+  const legacy = writeBundle('legacy-run', { status: 'archived' });
+  const readStatus = (statePath) => {
+    const res = run(['status', `--state=${statePath}`]);
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout);
+  };
+  assert.equal(readStatus(active).completion_class, null, 'a non-archived bundle stays null even with a stale completion field');
+  assert.equal(readStatus(archived).completion_class, 'complete');
+  assert.equal(readStatus(legacy).completion_class, 'legacy');
+  const listed = run(['runs', 'list', `--repo-root=${root}`]);
+  assert.equal(listed.status, 0, listed.stderr);
+  const bySlug = Object.fromEntries(JSON.parse(listed.stdout).runs.map((row) => [row.slug, row.completion_class]));
+  assert.equal(bySlug['active-run'], null);
+  assert.equal(bySlug['archived-run'], 'complete');
+  assert.equal(bySlug['legacy-run'], 'legacy');
+});
+
+test('mp continue on a schema-backed bundle loads the schema snapshot module', () => {
+  const root = tmpDir('mp-continue-schema-');
+  execFileSync('git', ['init', '-q', root]);
+  const bundleDir = path.join(root, 'docs', 'masterplan', 'schema-cont');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState(v8({
+    slug: 'schema-cont',
+    phase: 'execute',
+    status: 'in-progress',
+    goals_enabled: true,
+    concurrency: { owner_lock: 'off' },
+    tasks: [{ id: 1, status: 'done', wave: 1, files: ['a.txt'] }],
+    active_run: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['a.txt'] },
+  })));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  fs.writeFileSync(path.join(bundleDir, 'goals.md'), schemaBackedVersionedGoals('Continue'));
+  const skillRoot = stampSchemaBackedPin(statePath);
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    status: 'pending',
+    review_context: { enabled: true, base_sha: null, tasks: [], episodes: {} },
+  }));
+  const r = run(['continue', `--state=${statePath}`, '--dead', `--skill-root=${skillRoot}`]);
+  const text = `${r.stderr}\n${r.stdout}`;
+  assert.doesNotMatch(text, /schema_snapshot_module_not_implemented/);
+  assert.match(text, /no recorded reconciliation/, `continue must reach the schema-backed checkpoint, got: ${text}`);
+});
+
 // ---- round-3: the fail-open edges of both boundaries ------------------------------------
 
 test('merge-plan-fragments refuses a DANGLING state.yml symlink', () => {

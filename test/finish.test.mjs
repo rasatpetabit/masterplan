@@ -24,6 +24,7 @@ import {
   substituteVersionSafe,
   deployChainHash,
   classifyCompletion,
+  auditDeployBoundary,
 } from '../lib/finish.mjs';
 
 // ---- classifyDirt: task-scope vs user-owned dirt -----------------------------
@@ -527,5 +528,78 @@ test('finish locus landing: a tip merged by a merge commit records the merge', (
     assert.notEqual(recovered.merge_sha, git('rev-parse', 'HEAD'));
   } finally {
     fs.rmSync(main, { recursive: true, force: true });
+  }
+});
+
+// Real git, not a stubbed log: `git log --name-only -z` emits no path list for
+// `--allow-empty`, so the parser's files.length === 0 branch classifies that commit
+// foreign — the same class as a merge. Bundle and receipt-backed stage commits stay
+// non-foreign. This pins that behavior; it is not a guess about the log format.
+test('auditDeployBoundary: real git classifies bundle and stage commits, and catches empty, merge, and foreign commits', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finish-audit-'));
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  const write = (rel, content) => {
+    const full = path.join(repo, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  };
+  const commitAll = (message) => {
+    git('add', '-A');
+    git('commit', '-qm', message);
+    return git('rev-parse', 'HEAD');
+  };
+  try {
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.invalid');
+    git('config', 'user.name', 't');
+    git('config', 'commit.gpgsign', 'false');
+    write('package.json', JSON.stringify({ version: '1.0.0' }));
+    commitAll('base');
+    const base = git('rev-parse', 'HEAD');
+    write('docs/masterplan/run/1.md', 'bundle');
+    const bundleSha = commitAll('bundle');
+    write('CHANGELOG.md', 'changelog');
+    const stageSha = commitAll('stage');
+    git('commit', '-q', '--allow-empty', '-m', 'empty');
+    const emptySha = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-b', 'side');
+    write('side.txt', 'side');
+    commitAll('side');
+    git('checkout', '-q', 'main');
+    git('merge', '--no-ff', '--no-edit', 'side');
+    const mergeSha = git('rev-parse', 'HEAD');
+    write('src/foo.js', 'foreign');
+    const foreignSha = commitAll('foreign');
+    const opts = {
+      bundlePrefix: 'docs/masterplan',
+      commitPaths: ['CHANGELOG.md'],
+      versionFrom: 'package.json',
+      expectedVersion: '1.0.0',
+      stageCommits: [stageSha],
+    };
+    const bundle = auditDeployBoundary(repo, { ...opts, from: base, to: bundleSha });
+    assert.equal(bundle.ok, true, JSON.stringify(bundle));
+    assert.deepEqual(bundle.commits.map((c) => c.kind), ['bundle']);
+    const stage = auditDeployBoundary(repo, { ...opts, from: base, to: stageSha });
+    assert.equal(stage.ok, true, JSON.stringify(stage));
+    assert.deepEqual(stage.commits.map((c) => c.kind), ['bundle', 'stage']);
+    const empty = auditDeployBoundary(repo, { ...opts, from: stageSha, to: emptySha });
+    assert.equal(empty.ok, false, JSON.stringify(empty));
+    assert.equal(empty.reason, 'base moved');
+    assert.equal(empty.commits.at(-1).sha, emptySha);
+    assert.equal(empty.commits.at(-1).kind, 'foreign');
+    assert.deepEqual(empty.commits.at(-1).files, []);
+    const merge = auditDeployBoundary(repo, { ...opts, from: emptySha, to: mergeSha });
+    assert.equal(merge.ok, false, JSON.stringify(merge));
+    assert.equal(merge.commits.at(-1).sha, mergeSha);
+    assert.equal(merge.commits.at(-1).kind, 'foreign');
+    const foreign = auditDeployBoundary(repo, { ...opts, from: mergeSha, to: foreignSha });
+    assert.equal(foreign.ok, false, JSON.stringify(foreign));
+    assert.equal(foreign.reason, 'base moved');
+    assert.equal(foreign.commits.at(-1).sha, foreignSha);
+    assert.equal(foreign.commits.at(-1).kind, 'foreign');
+    assert.deepEqual(foreign.commits.at(-1).files, ['src/foo.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });

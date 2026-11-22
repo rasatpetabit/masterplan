@@ -488,6 +488,20 @@ test('findDanglingRuns: skips events.jsonl, plan.index.json, and owner reads for
   assert.equal(warnings.filter((w) => w.scope === 'events').length, 0);
 });
 
+test('findDanglingRuns: skipArchivedEnrichment false still enriches archived bundles', async () => {
+  const { findDanglingRuns } = await import('../lib/runs.mjs');
+  const { dir, bundleDir } = makeBundle({
+    slug: 'arch-enrich',
+    state: 'slug: arch-enrich\nstatus: archived\nphase: done\n',
+  });
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '{not json\n');
+  const skipped = findDanglingRuns({ repoRoot: dir, readConfig: false });
+  assert.equal(skipped.warnings.filter((w) => w.scope === 'events').length, 0);
+  const enriched = findDanglingRuns({ repoRoot: dir, readConfig: false, skipArchivedEnrichment: false });
+  assert.ok(enriched.warnings.some((w) => w.scope === 'events'));
+  assert.equal(enriched.runs[0].archived, true);
+});
+
 test('discoverRuns: SKIP_DIRS ignores dist, build, target, .cache, and coverage', () => {
   const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-skipdirs-'));
   fs.mkdirSync(path.join(root, '.git'), { recursive: true });

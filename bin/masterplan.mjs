@@ -199,9 +199,7 @@ import { runGit } from '../lib/watch-integrity.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { readEnv, childEnv, resolveRunConfig, resolveProbingMinimum, PLANNING_MODES } from '../lib/config.mjs';
 import { createHash } from 'node:crypto';
-import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity } from '../lib/finish.mjs';
 import { hasWaveRecording, recordingKey } from '../lib/wave-recording.mjs';
-import { finishLocusFacts } from '../lib/finish-loci.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
 
 // Heavy lib modules load on the verb that needs them. version / detect-host stay
@@ -246,6 +244,8 @@ let pinnedGoalsEvidenceHash;
 let dispatchWaveViaFabric, reviewNativeResult, disposeReviewEpisode;
 let continueRun, dispatchPlanFanout, resolvePlanMdPath;
 let finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash;
+let classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity;
+let finishLocusFacts;
 let sweepWorktrees;
 let discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath;
 
@@ -362,6 +362,14 @@ async function loadFinishStep() {
   if (finishStep) return;
   ({ finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } = await importLazy('../lib/finish-step.mjs'));
 }
+async function loadFinish() {
+  if (classifyDirt) return;
+  ({ classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity } = await importLazy('../lib/finish.mjs'));
+}
+async function loadFinishLoci() {
+  if (finishLocusFacts) return;
+  ({ finishLocusFacts } = await importLazy('../lib/finish-loci.mjs'));
+}
 async function loadSweep() {
   if (sweepWorktrees) return;
   ({ sweepWorktrees } = await importLazy('../lib/sweep.mjs'));
@@ -377,16 +385,14 @@ async function loadAllLazy() {
     loadMigrate(), loadResume(), loadWave(), loadReentryGuard(), loadReconcileIntent(), loadResumeBrief(),
     loadContextStatus(), loadInterview(), loadPlanMerge(), loadAmend(), loadScopeAuthorization(),
     loadCheckpointEvidence(), loadQctlEnqueue(), loadQctlArtifact(), loadQctlStatus(), loadQctlRequeue(),
-    loadWaveCommit(), loadPromote(), loadDispatchWave(), loadContinue(), loadFinishStep(), loadSweep(), loadRuns(),
+    loadWaveCommit(), loadPromote(), loadDispatchWave(), loadContinue(), loadFinishStep(), loadFinish(), loadFinishLoci(), loadSweep(), loadRuns(),
   ]);
 }
 
 // Interview verbs and checkpoint consumers recompute skill identity through the
-// schema-snapshot seam. Loaded only for those verbs — a missing module leaves the
-// guard fail-closed and does not take down the rest of dispatch.
-const SCHEMA_SNAPSHOT_VERBS = new Set([
-  'interview', 'set-phase', 'record-gate-review', 'record-intent-check', 'finish-step', 'record-result',
-]);
+// schema-snapshot seam. Every non-lightweight verb loads it: an allowlist missed
+// `continue` and the guard then failed closed as schema_snapshot_module_not_implemented.
+// A missing module leaves the guard fail-closed and does not take down the rest of dispatch.
 let schemaSnapshotLoad = null;
 async function ensureSchemaSnapshot() {
   await loadInterview();
@@ -427,7 +433,7 @@ async function preloadCommand(cmd) {
     return;
   }
   await loadAllLazy();
-  if (SCHEMA_SNAPSHOT_VERBS.has(cmd)) await ensureSchemaSnapshot();
+  await ensureSchemaSnapshot();
 }
 
 
@@ -1548,7 +1554,14 @@ function withScopeOwner(p, state, flags, mutate) {
     return mutate(readState(p));
   } finally {
     if (tookLock) {
-      try { releaseOwner(bundleDir, self, { now, ttlMs }); } catch { /* best-effort */ }
+      try {
+        const rel = releaseOwner(bundleDir, self, { now, ttlMs });
+        if (rel?.outcome && rel.outcome !== 'released') {
+          process.stderr.write(`scope amendment: owner lock release returned ${rel.outcome}${rel.reason ? ` (${rel.reason})` : ''}\n`);
+        }
+      } catch (e) {
+        process.stderr.write(`scope amendment: owner lock release failed: ${e?.message ?? e}\n`);
+      }
     }
   }
 }
@@ -5079,7 +5092,7 @@ async function main() {
         try { st = parseState(fs.readFileSync(r.statePath, 'utf8')); } catch { st = null; }
         return {
           ...r,
-          completion_class: completionClass(st ?? { status: r.status }),
+          completion_class: st?.status === 'archived' ? completionClass(st) : null,
           pushed: archivePushedOf(evs),
         };
       });
@@ -5170,7 +5183,7 @@ async function main() {
       out({
         slug: state.slug ?? null,
         status: state.status ?? null,
-        completion_class: completionClass(state),
+        completion_class: state?.status === 'archived' ? completionClass(state) : null,
         pushed: archivePushedOf(statusEvents),
         phase: state.phase ?? null,
         tasks: { done, total: tasks.length },

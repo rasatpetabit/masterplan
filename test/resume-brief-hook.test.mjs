@@ -226,3 +226,28 @@ command = ["node", "/usr/local/bin/mp", "resume-brief"]
   assert.equal(findings[0].severity, 'WARN');
   assert.match(findings[0].summary, /without --repo-root/);
 });
+
+test('resume-brief-hook: single-quoted command arrays are commands, not malformed JSON', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = ['node', '/usr/local/bin/mp', 'resume-brief', '--repo-root=$CWD']
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
+});
+
+test('resume-brief-hook: a multiline command array may use double quotes and a trailing comma', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = [
+  "session_start",
+]
+command = [
+  "node",
+  "/usr/local/bin/mp",
+  "resume-brief",
+  "--repo-root=$CWD",
+]
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
+});
