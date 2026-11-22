@@ -41,6 +41,7 @@ import {
   recordDraft,
   recordCritic,
   endInterview,
+  reopenInterview,
   waiveInterview,
   interviewStatus,
   intentSha,
@@ -517,6 +518,82 @@ test('at low complexity the mechanical test decides: critic_off end under captur
 });
 
 // ---- coverage-record validation (the §5.3 coverage condition) -----------------------
+
+for (const [precondition, reason, probingMinimum, refusal, modify] of [
+  ['latest draft', 'converged', 2, /latest intent-content event/, ({ statePath, skillRoot }) => {
+    askQuestion({ statePath, skillRoot, id: 'Q4', round: 2, kind: 'intent', text: 'What changed?' });
+    answerQuestion({ statePath, skillRoot, id: 'Q4', text: 'The draft is stale.' });
+  }],
+  ['clean critic payload', 'converged', 2, /clean critic payload/, (fx) => {
+    recordReceipt({ ...fx, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, unknowns: ['unresolved'], n: 2 });
+  }],
+  ['probing minimum', 'converged', 3, /probing minimum/, () => {}],
+  ['critic_off complexity', 'critic_off', 2, /requires complexity low/, () => {}],
+  ['exhaustion grounds', 'exhausted', 2, /cap reached.*forks_exhausted/, () => {}],
+]) {
+  test(`refused end on ${precondition} leaves bundle coverage and events untouched`, () => {
+    const fx = convergingSchemaBackedMedium();
+    modify(fx);
+    const dest = path.join(fx.dir, 'interview-section-coverage.json');
+    // A prior successful end's artifact may still exist after reopening.
+    if (reason === 'converged') fs.writeFileSync(dest, 'prior coverage bytes');
+    const snapshot = () => fs.readdirSync(fx.dir).sort().map((name) => [name, fs.readFileSync(path.join(fx.dir, name), 'utf8')]);
+    const before = snapshot();
+    assert.throws(() => endInterview({ ...fx, reason, probingMinimum }), refusal);
+    assert.deepEqual(snapshot(), before);
+  });
+}
+
+test('endInterview atomically publishes coverage before appending the terminal event', (t) => {
+  const fx = convergingSchemaBackedMedium();
+  const dest = path.join(fx.dir, 'interview-section-coverage.json');
+  const prior = 'prior coverage bytes';
+  fs.writeFileSync(dest, prior);
+  const rename = fs.renameSync;
+  const tmpPaths = [];
+  let fail = true;
+  t.mock.method(fs, 'renameSync', (src, dst) => {
+    if (dst === dest) {
+      tmpPaths.push(src);
+      assert.equal(fs.readFileSync(dest, 'utf8'), prior, 'the old coverage is intact until replacement');
+      assert.equal(lastEvent(fx.statePath, 'interview_end'), null);
+      if (fail) throw Object.assign(new Error('coverage rename failed'), { code: 'EIO' });
+    }
+    return rename(src, dst);
+  });
+  const opts = { ...fx, reason: 'converged', probingMinimum: 2 };
+  assert.throws(() => endInterview(opts), /coverage rename failed/);
+  assert.equal(fs.readFileSync(dest, 'utf8'), prior);
+  assert.equal(lastEvent(fx.statePath, 'interview_end'), null);
+  fail = false;
+  endInterview(opts);
+  assert.equal(new Set(tmpPaths).size, 2);
+  assert.ok(tmpPaths.every((src) => !fs.existsSync(src)), 'no temporary file survives either attempt');
+  const raw = fs.readFileSync(dest);
+  assert.deepEqual(raw, fs.readFileSync(fx.coverageFile));
+  assert.equal(lastEvent(fx.statePath, 'interview_end').coverage_sha256, crypto.createHash('sha256').update(raw).digest('hex'));
+});
+
+for (const failure of ['skill_absent', 'skill_identity_changed']) {
+  test(`schema-backed reopen refuses ${failure} without appending and the CLI forwards a valid root`, () => {
+    const fx = convergingSchemaBackedMedium();
+    endInterview({ ...fx, reason: 'converged', probingMinimum: 2 });
+    const skill = path.join(fx.skillRoot, 'SKILL.md');
+    const original = fs.readFileSync(skill);
+    if (failure === 'skill_identity_changed') fs.appendFileSync(skill, '\nchanged\n');
+    const eventPath = path.join(fx.dir, 'events.jsonl');
+    const before = fs.readFileSync(eventPath);
+    assert.throws(() => reopenInterview({
+      statePath: fx.statePath, reason: 'revise',
+      skillRoot: failure === 'skill_absent' ? undefined : fx.skillRoot,
+    }), new RegExp(failure));
+    assert.deepEqual(fs.readFileSync(eventPath), before);
+    fs.writeFileSync(skill, original);
+    const cli = spawnSync(process.execPath, [BIN, 'interview', 'reopen', `--state=${fx.statePath}`, '--reason=revise', `--skill-root=${fx.skillRoot}`], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(lastEvent(fx.statePath, 'interview_reopened').reason, 'revise');
+  });
+}
 
 test('coverage: the record is validated EXACTLY against the frozen snapshot, fail-closed on every shape of incompleteness', () => {
   const { dir, statePath } = mkbundle('medium');

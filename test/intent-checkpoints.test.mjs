@@ -30,7 +30,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { writeState, buildSeedState, appendEvent, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
+import { readState, writeState, buildSeedState, appendEvent, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
 import { captureSchema, registerSchemaSnapshotModule, SCHEMA_SNAPSHOT_FILENAME, askQuestion, amendSkillIdentity } from '../lib/interview.mjs';
 import { captureSchemaSnapshot, computeSkillIdentity } from '../lib/schema-snapshot.mjs';
 import {
@@ -185,6 +185,57 @@ function mkBundle({ schema = SCHEMA, goalsMd = versionedGoalsMd(), reconcile = t
   if (reconcile) mkRecordedReconciliation(statePath);
   return { dir, statePath, skillRoot };
 }
+
+test('spec checkpoint hashes the recorded bundle-relative spec name exactly as gate-hash does', () => {
+  const { dir, statePath } = mkBundle({ capture: false, goalsMd: LEGACY_GOALS_MD });
+  const specPath = 'nested/spec-review.md';
+  const state = { ...readState(statePath), goals_enabled: true, spec_path: specPath };
+  writeState(statePath, state);
+  fs.mkdirSync(path.join(dir, 'nested'));
+  fs.writeFileSync(path.join(dir, specPath), '# custom spec\n');
+  const bin = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
+  const { hash } = JSON.parse(execFileSync(process.execPath, [bin, 'gate-hash', `--state=${statePath}`, '--gate=spec'], { cwd: dir, encoding: 'utf8' }));
+  assert.equal(specGateArtifactHash({ statePath, specPath: path.join(dir, specPath) }), hash);
+  assert.equal(specGateArtifactHash({ statePath, specPath, state: { ...state, spec_path: 'ignored.md' } }), hash);
+  assert.equal(specGateArtifactHash({ statePath }), hash);
+});
+
+test('alignment checkpoint hashes the configured plan bytes with explicit and recorded bundle-relative paths', () => {
+  const { dir, statePath } = mkBundle({ capture: false, goalsMd: null });
+  const planPath = 'nested/alignment.md';
+  const planBytes = '# custom plan\n';
+  fs.mkdirSync(path.join(dir, 'nested'));
+  fs.writeFileSync(path.join(dir, planPath), planBytes);
+  writeState(statePath, { plan_path: planPath });
+  assert.equal(planArtifactHash({ statePath, planPath, state: { plan_path: 'ignored.md' } }), artifactDigest(planBytes));
+  assert.equal(planArtifactHash({ statePath }), artifactDigest(planBytes));
+});
+
+for (const [marker, state] of Object.entries({ goals_enabled: { goals_enabled: true }, schema_backed: { format_pin: 'schema_backed' }, goalsRequired: {} })) {
+  test(`spec checkpoint refuses missing goals.md when required by ${marker}`, () => {
+    const { dir, statePath } = mkBundle({ capture: false, goalsMd: null });
+    writeState(statePath, state);
+    fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+    const opts = marker === 'goalsRequired' ? { goalsRequired: true } : {};
+    assert.throws(() => specGateArtifactHash({ statePath, ...opts }), /goals\.md.*ENOENT/);
+  });
+}
+
+test('spec checkpoint refuses missing goals.md when capture history predates the format pin', () => {
+  const { dir, statePath } = mkBundle({ goalsMd: null, reconcile: false });
+  writeState(statePath, {});
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  assert.throws(() => specGateArtifactHash({ statePath }), /goals\.md.*ENOENT/);
+});
+
+test('spec checkpoint allows absent pre-goals goals.md but refuses non-ENOENT reads', () => {
+  const { dir, statePath } = mkBundle({ capture: false, goalsMd: null });
+  writeState(statePath, {});
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  assert.equal(specGateArtifactHash({ statePath }), `sha256:${sha256Hex('spec.md\0# spec\n\0')}`);
+  fs.mkdirSync(path.join(dir, 'goals.md'));
+  assert.throws(() => specGateArtifactHash({ statePath, goalsRequired: false }), /goals\.md.*EISDIR/);
+});
 
 // A real integration-target pair (target remote + consumer checkout) and a RECORDED
 // reconciliation on the bundle — §6.3's durable record, which reconciliation_digest

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, INTENT_VERDICTS, validateUserApprovalReceipt, validateGoalCheckReceipt, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { decodeIntent, encodeIntentBlock, INTENT_CODEC_VERSION, parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, INTENT_VERDICTS, validateUserApprovalReceipt, validateGoalCheckReceipt, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -34,6 +34,43 @@ signal: command
 
   assert.equal(goals[1].id, 'G2');
   assert.equal(goals[1].signal, 'command');
+});
+
+for (const heading of ['## Intent', '## G1: Sample']) {
+  test(`block topic preserves fenced ${heading} and resumes at the real Intent`, () => {
+    const seed = ['Build X', '```markdown', heading, 'outcome: sample', '```', 'Keep this too'];
+    const parsed = parseGoals(['topic: |', ...seed, '## Intent', 'outcome: actual', '## G1: Real goal'].join('\n'));
+    assert.equal(parsed.topicSeed, seed.join('\n'));
+    assert.equal(parsed.intent.outcome, 'actual');
+    assert.deepEqual(parsed.goals.map((g) => g.text), ['Real goal']);
+  });
+}
+
+test('bare topic without a blank separator stops at the Intent heading', () => {
+  const parsed = parseGoals('topic: Build X\n## Intent\noutcome: actual\n## G1: Real goal\n');
+  assert.equal(parsed.topicSeed, 'Build X');
+  assert.equal(parsed.intent.outcome, 'actual');
+  assert.deepEqual(parsed.goals.map((g) => g.text), ['Real goal']);
+});
+
+test('an indented code heading inside Intent does not hide its schema codec block', () => {
+  const authoritative = {
+    version: INTENT_CODEC_VERSION,
+    schema: { identity: 'fixture', format_version: 1 },
+    sections: {
+      purpose: { body: 'Build X' }, top_invariant: { body: 'Keep X' },
+      non_goals: { items: [] }, direction: { body: 'Ship X' }, posture: { body: 'Fail closed' },
+    },
+    context: { outcome: { body: 'X works' }, done_means: { body: 'X is shipped' } },
+    evidence: [], reconciliation: [],
+  };
+  const encoded = encodeIntentBlock(authoritative);
+  assert.equal(encoded.ok, true);
+  const md = `topic: |\nBuild X\n${encoded.block.replace('```mp-intent-schema', '    ## Notes\n\n```mp-intent-schema')}`;
+  const decoded = decodeIntent(md);
+  assert.equal(decoded.versioned, true);
+  assert.deepEqual(decoded.authoritative, authoritative);
+  assert.equal(decoded.legacyView.outcome, 'X works');
 });
 
 test('parseGoals returns empty on non-string input', () => {

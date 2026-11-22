@@ -692,26 +692,28 @@ test('an unknown transaction id refuses (there is nothing to recover)', () => {
 // (state.yml's goals_md_hash) is a DERIVED write that follows it. A crash between them
 // must not strand the cache forever: the replay path completes the convergence under the
 // held lock, from the event's data (the authority), and never double-appends.
-// The crash is injected through the module's real state-write seam: writeState's
-// tmp+rename (lib/bundle.mjs) targets a DETERMINISTIC `<statePath>.tmp` path, so a
-// DIRECTORY planted there raises EISDIR exactly at the convergence write — the exact
-// crash window under test, reached with the REAL entry path.
+// The crash is injected at writeState's rename to the durable state path, regardless
+// of the temporary name. Restore the real rename before replaying the transaction.
+function interruptStateRename(t, statePath, run) {
+  const rename = fs.renameSync;
+  const seam = t.mock.method(fs, 'renameSync', (src, dest) => {
+    if (dest === statePath) throw new Error('injected state rename failure');
+    return rename(src, dest);
+  });
+  try {
+    assert.throws(run, /injected state rename failure/);
+  } finally {
+    seam.mock.restore();
+  }
+}
 
-test('a crash between the terminal event and the state write: the replay CONVERGES the stranded goals cache, exactly-once', () => {
+test('a crash between the terminal event and the state write: the replay CONVERGES the stranded goals cache, exactly-once', (t) => {
   const fx = mkbundle();
   const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
   const goalsResult = GOALS + '## G4: CrashConverge\nsignal: test\n';
   const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-crashconv' });
-  // Inject the crash AT THE STATE WRITE: the tmp+rename seam's deterministic temp path
-  // becomes a directory → EISDIR exactly at recordTransaction's convergence write, AFTER
-  // both events have appended. The real entry path throws — the crash is simulated.
-  const tmpSeam = `${fx.statePath}.tmp`;
-  fs.mkdirSync(tmpSeam);
-  assert.throws(
-    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }),
-    /EISDIR|already exists and is not a file/
-  );
-  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  interruptStateRename(t, fx.statePath,
+    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }));
   // The crash shape: both artifacts landed at their approved results, the terminal event
   // + goal_amended are recorded, but state.goals_md_hash was NEVER converged.
   assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), specResult);
@@ -750,19 +752,14 @@ test('a converged replay stays a pure no-op — the converged-cache completion i
   assert.equal(replay.converged_goals_cache, undefined, 'a converged cache is not re-converged');
 });
 
-test('a crash after the event leaves the recovery-path REPLAY convergent too (commit re-entry)', () => {
+test('a crash after the event leaves the recovery-path REPLAY convergent too (commit re-entry)', (t) => {
   const fx = mkbundle();
   const specResult = SPEC.replace('The old outcome.', 'The amended outcome.');
   const goalsResult = GOALS + '## G4: RecConverge\nsignal: test\n';
   const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-recconv' });
   beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
-  const tmpSeam = `${fx.statePath}.tmp`;
-  fs.mkdirSync(tmpSeam);
-  assert.throws(
-    () => commitPromotion({ statePath: fx.statePath, transactionId: 'tx-recconv', self: self(fx), now: 2000 }),
-    /EISDIR|already exists and is not a file/
-  );
-  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  interruptStateRename(t, fx.statePath,
+    () => commitPromotion({ statePath: fx.statePath, transactionId: 'tx-recconv', self: self(fx), now: 2000 }));
   assert.equal(readState(fx.statePath).goals_md_hash, undefined);
   // Commit re-entry routes through the recovery table → the recorded event → the
   // convergent replay: same completion, same exactly-once.
@@ -795,18 +792,13 @@ test('a crash before the terminal event never fakes convergence: recovery comple
   assert.equal(events.filter((e) => e.type === 'goal_amended').length, 1);
 });
 
-test('a superseding goal_amended after the crash is NOT unconverged — the replay never rewinds a newer lineage hash', () => {
+test('a superseding goal_amended after the crash is NOT unconverged — the replay never rewinds a newer lineage hash', (t) => {
   const fx = mkbundle();
   const specResult = SPEC.replace('The old outcome.', 'The amended outcome.');
   const goalsResult = GOALS + '## G4: CrashSupersede\nsignal: test\n';
   const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-supersede' });
-  const tmpSeam = `${fx.statePath}.tmp`;
-  fs.mkdirSync(tmpSeam);
-  assert.throws(
-    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }),
-    /EISDIR|already exists and is not a file/
-  );
-  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  interruptStateRename(t, fx.statePath,
+    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }));
   // A LATER amendment on top (the legitimate lineage continuation): its event carries a
   // new_goals_hash newer than this transaction's result, and the cache converged TO IT.
   // The supersession is recognized ONLY through its AUTHORIZATION (the re-review's finding

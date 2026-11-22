@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { continueRun, dispatchPlanFanout, snapshotRootsPorcelain, diffRootsPorcelain, buildPlanWorkItem, resolvePlanMdPath } from '../lib/continue.mjs';
 import { classifyLegacyMarker, decideNextAction } from '../lib/resume.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
-import { readState, writeState } from '../lib/bundle.mjs';
+import { appendEvent, readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { goalsHash } from '../lib/goals.mjs';
@@ -137,6 +137,23 @@ test('op sequence: launch wave 1 → record → launch wave 2 → record → fin
   assert.equal(rec2.next.action, 'complete');
   assert.deepEqual(continueRun(base), { op: 'run_skill', skill: 'finish' });
 });
+
+for (const disposition of ['removed_after_merge', 'kept_by_user']) {
+  test(`dispatch resets ${disposition} to active when it reopens the recorded worktree`, () => {
+    const fx = makeFixture({
+      tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+      planIndex: [planEntry(1, 1, ['src/a.txt'])],
+      extra: { worktree_disposition: disposition },
+    });
+    const wt = path.join(fx.MAIN, '.worktrees', 't23');
+    if (disposition === 'kept_by_user') git(fx.MAIN, 'worktree', 'add', '-qb', 'masterplan/t23', wt);
+    writeState(fx.statePath, { ...readState(fx.statePath), worktree: wt });
+    const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+    assert.equal(op.op, 'dispatch_fabric');
+    assert.equal(op.cwd, wt);
+    assert.equal(readState(fx.statePath).worktree_disposition, 'active');
+  });
+}
 
 test('Guard D: a live concurrent owner blocks; --force steals; owner_lock=off skips the sentinel entirely', () => {
   const fx = makeFixture({
@@ -456,6 +473,26 @@ test('codex-suppressed planning (Codex r6 P2): serial forced on resume_phase; pl
 });
 
 const GOALS_MD = 'topic: Track goals\n\n## G1: Do the thing\nsignal: test\nevidence: it works\n';
+
+test('goals split-brain guard refuses corrupt event JSON after a valid frozen hash', () => {
+  const fx = makeFixture({ tasks: [], phase: 'brainstorm', extra: { goals_enabled: true, format_pin: 'legacy' } });
+  write(fx.bundleDir, 'goals.md', GOALS_MD);
+  appendEvent(fx.statePath, { type: 'goals_frozen', data: { goals_hash: goalsHash(GOALS_MD) } });
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), '  \n{"type":\n');
+  assert.throws(() => continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 }), /events\.jsonl.*line 3/);
+});
+
+test('goals split-brain guard propagates non-ENOENT reads of events.jsonl', (t) => {
+  const fx = makeFixture({ tasks: [], phase: 'brainstorm', extra: { goals_enabled: true } });
+  const eventPath = path.join(fx.bundleDir, 'events.jsonl');
+  const unreadable = Object.assign(new Error('fixture permission denied'), { code: 'EACCES' });
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (p, ...args) => {
+    if (p === eventPath) throw unreadable;
+    return read(p, ...args);
+  });
+  assert.throws(() => continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 }), (err) => err === unreadable);
+});
 
 test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-errors; no-event and pre-feature bundles are exempt', () => {
   const frozenHash = goalsHash(GOALS_MD);
@@ -831,6 +868,10 @@ test('legacy reconcile (fixture: pi-intercom shape): a stale finished-wave marke
     planIndex: legacy.tasks.map((t) => planEntry(t.id, t.wave, t.files)),
     slug: 'lm-pi',
   });
+  // The marker describes an already executed wave: reconcile against its surviving locus.
+  const wt = path.join(fx.MAIN, '.worktrees', 'lm-pi');
+  git(fx.MAIN, 'worktree', 'add', '-qb', 'masterplan/lm-pi', wt);
+  writeState(fx.statePath, { ...readState(fx.statePath), worktree: wt });
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
   assert.equal(op.op, 'dispatch_fabric');
   assert.equal(op.wave, 1, 'stale wave-3 marker finalized; the earlier pending wave dispatches');
@@ -841,6 +882,24 @@ test('legacy reconcile (fixture: pi-intercom shape): a stale finished-wave marke
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.wave, 1, 'fresh phase-1 marker for the re-derived wave');
   assert.equal(marker.phase, 'launching');
+});
+
+test('legacy 3b reports a missing completed-wave worktree without creating a replacement', () => {
+  const pathName = 'lm-missing';
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, phase: 'launching', scope: [], baseline: [] },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: pathName,
+    extra: { worktree_disposition: 'removed_after_merge' },
+  });
+  const before = fs.readFileSync(fx.statePath, 'utf8');
+  const worktrees = git(fx.MAIN, 'worktree', 'list', '--porcelain');
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.ask, 'legacy-marker-unreconcilable', JSON.stringify(op));
+  assert.match(op.error, /record-result: worktree .* does not exist/);
+  assert.equal(git(fx.MAIN, 'worktree', 'list', '--porcelain'), worktrees);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
 });
 
 test('legacy reconcile: a PROMOTED execute marker (probe/reap-expected) redispatches via fabric without any probe op; --alive=true still defers', () => {

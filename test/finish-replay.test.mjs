@@ -135,6 +135,20 @@ function walkToDeployOrArchive(fx) {
   return fx.step({ choice: 'merge' });
 }
 
+test('finish replay refuses a corrupt event with its physical line number', () => {
+  const fx = makeFixture({ done: 'done: none\n' });
+  write(fx.bundleDir, 'events.jsonl', '{"type":"fixture"}\n  \n{"type":\n');
+  assert.throws(() => fx.step(), /events\.jsonl.*line 3/);
+});
+
+test('a verification answer does not mutate finish state over a corrupt event ledger', () => {
+  const fx = makeFixture({ done: 'done: none\n' });
+  write(fx.bundleDir, 'events.jsonl', '{"type":\n');
+  const state = fs.readFileSync(fx.statePath, 'utf8');
+  assert.throws(() => fx.step({ verify: 'fail' }), /events\.jsonl.*line 1/);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), state);
+});
+
 const CHECKED = 'done:\n  release:\n    - run: /bin/true\n      check: /bin/true\n';
 const CHECKLESS = 'done:\n  install:\n    - run: /bin/true\n';
 // A check that reports the step's work absent — the probe's "exit 1 means absent" path.

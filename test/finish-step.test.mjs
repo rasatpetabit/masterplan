@@ -1864,6 +1864,62 @@ test('F2: multi-locus preflight leaves run dirt to legacy teardown', () => {
   assert.equal(readState(fx.statePath).worktree_disposition, 'active');
 });
 
+for (const choice of ['merge', 'discard']) {
+  test(`failed ${choice} teardown retains branch_finish and replays after manual removal`, () => {
+    const fx = makeFixture({ state: { worktree_disposition: 'active' } });
+    const gate = walkToGate(fx);
+    const pending = readState(fx.statePath).pending_gate;
+    git(fx.MAIN, 'worktree', 'lock', fx.WT);
+
+    const failed = fx.step({ choice });
+    assert.equal(failed.ask, 'dispatch-error');
+    assert.match(failed.error, /worktree removal failed/);
+    assert.equal(readState(fx.statePath).worktree_disposition, 'active');
+    assert.deepEqual(readState(fx.statePath).pending_gate, pending);
+    const retirements = (events) => events.filter((e) => ['branch_finish_intent', 'branch_finish'].includes(e.type));
+    const recorded = retirements(readEvents(fx.bundleDir));
+    assert.deepEqual(recorded.map((e) => [e.type, e.note, e.branch_tip]), [
+      ['branch_finish_intent', choice, gate.head], ['branch_finish', choice, gate.head],
+    ]);
+    const committedEvents = git(fx.MAIN, 'show', `HEAD:${path.relative(fx.MAIN, fx.bundleDir)}/events.jsonl`);
+    assert.deepEqual(retirements(committedEvents.split('\n').map((line) => JSON.parse(line))), recorded);
+    assert.equal(fx.step().gate, 'branch_finish');
+
+    git(fx.MAIN, 'worktree', 'unlock', fx.WT);
+    fs.rmSync(fx.WT, { recursive: true }); // operator removed the checkout, leaving the git admin entry
+    const replayGate = fx.step();
+    assert.equal(replayGate.gate, 'branch_finish');
+    assert.equal(replayGate.head, gate.head);
+    assert.equal(replayGate.wt_missing, true);
+    assert.equal(fx.step({ choice }).reason, 'archived');
+    const retired = readState(fx.statePath);
+    assert.equal(retired.worktree_disposition, 'removed_after_merge');
+    assert.equal(retired.pending_gate, null);
+    assert.ok(!git(fx.MAIN, 'worktree', 'list', '--porcelain').includes(fx.WT));
+    assert.deepEqual(retirements(readEvents(fx.bundleDir)), recorded, 'the replay does not duplicate audit events');
+  });
+}
+
+for (const choice of ['merge', 'discard']) {
+  test(`bare finish recovers an older cleared gate after recorded ${choice} and manual removal`, () => {
+    const fx = makeFixture({ state: { worktree_disposition: 'active' } });
+    const gate = walkToGate(fx);
+    git(fx.MAIN, 'worktree', 'lock', fx.WT);
+    assert.match(fx.step({ choice }).error, /worktree removal failed/);
+    writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null }); // state left by older finish-step
+    git(fx.MAIN, 'worktree', 'unlock', fx.WT);
+    git(fx.MAIN, 'worktree', 'remove', fx.WT);
+    git(fx.MAIN, 'branch', choice === 'discard' ? '-D' : '-d', 'masterplan/t24');
+
+    const replay = fx.step();
+    assert.equal(replay.gate, 'branch_finish');
+    assert.equal(replay.head, gate.head, 'the head comes from the durable retirement record');
+    assert.equal(replay.wt_missing, true);
+    assert.equal(readState(fx.statePath).pending_gate.id, 'branch_finish');
+    assert.equal(fx.step({ choice }).reason, 'archived');
+  });
+}
+
 test('F3: EXT tip moved after preflight is refused before its merge', () => {
   const fx = makeFixture();
   const ext = addFinishLocus(fx);

@@ -11,6 +11,8 @@ import {
   serializeState,
   readState,
   writeState,
+  waveDispatchRecordPath,
+  writeWaveDispatchRecord,
   openGate,
   clearGate,
   setActiveRun,
@@ -50,6 +52,31 @@ after(() => {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
   }
 });
+
+for (const [name, dest, write] of [
+  ['writeState', (dir) => path.join(dir, 'state.yml'), (dir, value) => writeState(path.join(dir, 'state.yml'), value)],
+  ['writeWaveDispatchRecord', (dir) => waveDispatchRecordPath(dir, 1), (dir, value) => writeWaveDispatchRecord(dir, 1, value)],
+]) {
+  test(`${name} uses distinct temp files for overlapping atomic writes`, (t) => {
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-atomic-'));
+    const destination = dest(dir);
+    const rename = fs.renameSync;
+    const sources = [];
+    t.mock.method(fs, 'renameSync', (src, dst) => {
+      assert.equal(dst, destination);
+      sources.push(src);
+      // Another writer completes after the first wrote its temp but before it renames.
+      if (sources.length === 1) write(dir, { slug: 'second' });
+      return rename(src, dst);
+    });
+    write(dir, { slug: 'first' });
+    assert.equal(new Set(sources).size, 2);
+    assert.ok(sources.every((src) => src.startsWith(`${destination}.tmp-${process.pid}-`)));
+    const raw = fs.readFileSync(destination, 'utf8');
+    assert.deepEqual(name === 'writeState' ? parseState(raw) : JSON.parse(raw), { slug: 'first' });
+    assert.deepEqual(fs.readdirSync(dir), [path.basename(destination)]);
+  });
+}
 
 test('round-trips scalars with correct types', () => {
   const s = { schema_version: '6.0', slug: 'my-run', current_wave: 2, autonomy: 'loose', done: true, pending_gate: null };

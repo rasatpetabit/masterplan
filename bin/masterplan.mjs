@@ -4871,7 +4871,7 @@ function main() {
             break;
           }
           case 'reopen':
-            reopenInterview({ statePath: p, reason: need(flags, 'reason') });
+            reopenInterview({ statePath: p, reason: need(flags, 'reason'), skillRoot: guardedSkillRoot });
             break;
           case 'status':
             out(interviewStatus(p));

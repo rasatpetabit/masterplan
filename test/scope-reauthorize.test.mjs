@@ -88,15 +88,23 @@ function reviewFile(fx, receipt = {}) {
   return '--reviews-file=' + path.join(fx.tmp, 'reviews.json');
 }
 function interruptAmendment(fx, ...args) {
-  // Block the temp write, not the event append; execute the real CLI mutation.
+  // Block the durable state rename, not the event append; execute the real CLI mutation.
   const before = fs.readFileSync(fx.statePath, 'utf8');
-  const blocker = fx.statePath + '.tmp';
-  fs.mkdirSync(blocker);
-  try {
-    const res = fx.mp(...args);
-    assert.notEqual(res.status, 0);
-    assert.match(res.stderr, /EISDIR.*state\.yml\.tmp/);
-  } finally { fs.rmdirSync(blocker); }
+  const hook = path.join(fx.tmp, 'interrupt-state-rename.mjs');
+  fs.writeFileSync(hook, `
+    import fs from 'node:fs';
+    const rename = fs.renameSync;
+    fs.renameSync = (src, dest) => {
+      if (dest === ${JSON.stringify(fx.statePath)}) {
+        fs.rmSync(src);
+        throw new Error('injected state rename failure');
+      }
+      return rename(src, dest);
+    };
+  `);
+  const res = spawnSync(process.execPath, ['--import', hook, cli, ...args, '--state=' + fx.statePath], { encoding: 'utf8' });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /injected state rename failure/);
   assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
   const event = events(fx).at(-1);
   assert.deepEqual(event.task_files, [{ id: 1, wave: 1, files: ['src/'] }]);
