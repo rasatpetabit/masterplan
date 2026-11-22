@@ -13,8 +13,8 @@ import { execFileSync } from 'node:child_process';
 
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { reviewNativeResult, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
-import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, workspaceRootFor } from '../lib/watch-integrity.mjs';
-import { readState, writeState } from '../lib/bundle.mjs';
+import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, snapshotWatchList, verifyWatchListDelta, watchBaselinePath, workspaceRootFor } from '../lib/watch-integrity.mjs';
+import { appendEvent, readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 
@@ -136,7 +136,11 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.equal(after.active_run, null);
   assert.deepEqual(after.tasks.map((t) => t.status), ['done', 'done']);
   const events = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(events.at(-1).type, 'wave_recorded');
+  assert.deepEqual(events.at(-1), {
+    type: 'wave_recorded', ts: new Date(2000).toISOString(), phase: 'execute', wave: 1,
+    recorded: res.recorded, failed: res.failed, cleared: res.cleared,
+    note: events.at(-1).note, commits: { code: res.commits.code, code_by_repo: res.commits.code_by_repo },
+  });
 });
 
 const healthyHarness = {
@@ -365,6 +369,91 @@ test('REGRESSION: excluding the heartbeat did not blind the watch to a real MAIN
   assert.match(fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'), /"type":"watch_list_breach"/);
 });
 
+function watchedRecordingFixture(bundleLocus = 'main') {
+  const fx = makeFixture({ bundleLocus,
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
+    ],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt', 'src/b.txt'], baseline: [] },
+  });
+  appendEvent(fx.statePath, { type: 'fixture_started' });
+  const baseline = captureWatchBaseline({ mainRoot: fx.MAIN, bundleDir: fx.bundleDir,
+    worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt', 'src/b.txt'] });
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+  write(fx.WT, 'src/a.txt', 'worker result\n');
+  return { ...fx, baseline };
+}
+
+function assertWatchedRecordingRefuses(fx, expected) {
+  const snapshot = () => ({
+    state: fs.readFileSync(fx.statePath, 'utf8'),
+    events: fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'),
+    refs: git(fx.MAIN, 'show-ref'),
+    status: [fx.MAIN, fx.WT].map(repo => git(repo, '--no-optional-locks', 'status', '--porcelain')),
+    ownerFiles: fs.readdirSync(fx.bundleDir).filter(name => name.startsWith('.owner'))
+      .map(name => fs.readFileSync(path.join(fx.bundleDir, name), 'utf8')),
+  });
+  const before = snapshot();
+  assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, tasks: [digest(1, 'done')] } }), expected);
+  assert.deepEqual(snapshot(), before);
+  assert.equal(fs.existsSync(path.join(fx.bundleDir, '.wave-recording.json')), false);
+}
+
+for (const [name, forge, reason, refusal = /controller state tamper.*state\.yml/] of [
+  ['archived phase', st => { st.phase = 'archived'; }, /phase.*archived/],
+  ['left execute phase', st => { st.phase = 'plan'; }, /phase.*plan/],
+  ['archived status', st => { st.status = 'archived'; }, /status.*archived/, /bundle is archived/],
+  ['abandoned status', st => { st.status = 'abandoned'; }, /status.*abandoned/],
+  ['cleared active_run', st => { st.active_run = null; }, /active_run.*cleared/, /no active_run marker/],
+  ['forged task 2 done', st => { st.tasks[1].status = 'done'; }, /task 2.*done/],
+  ['forged task 2 waived', st => { st.tasks[1].status = 'waived'; }, /task 2.*waived/],
+  ['newly added done task', st => { st.tasks.push({ id: 3, status: 'done', wave: 1 }); }, /task 3.*done/],
+  ['illegal top-level key', st => { st.goals = ['forged']; }, /changed fields.*goals/],
+  ['malformed task state', st => { st.tasks = '[broken'; }, /no longer parses.*tasks/],
+]) {
+  test('controller state tamper: ' + name + ' is flagged and recording writes nothing', () => {
+    const fx = watchedRecordingFixture(name === 'forged task 2 done' ? 'worktree' : 'main');
+    const state = readState(fx.statePath);
+    forge(state);
+    writeState(fx.statePath, state);
+    const after = snapshotWatchList(Object.values(fx.baseline.snapshots));
+    const watch = verifyWatchListDelta(fx.baseline.snapshots, after, ['src/a.txt', 'src/b.txt'], { bundle: fx.baseline.bundle });
+    const stateViolation = watch.violations.find(v => v.path.endsWith('/state.yml'));
+    assert.ok(stateViolation, JSON.stringify(watch));
+    assert.match(stateViolation.reason, reason);
+    assert.equal(stateViolation.controllerTamper, true);
+    assertWatchedRecordingRefuses(fx, refusal);
+  });
+}
+
+test('record-result: clean status in both snapshots does not hide committed controller state tamper', () => {
+  const fx = watchedRecordingFixture();
+  const rel = path.relative(fx.MAIN, fx.statePath);
+  git(fx.MAIN, 'add', '--', rel);
+  git(fx.MAIN, 'commit', '-qm', 'launch controller state');
+  writeWatchBaseline(fx.bundleDir, 1, captureWatchBaseline({ mainRoot: fx.MAIN, bundleDir: fx.bundleDir,
+    worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt', 'src/b.txt'] }));
+  const state = readState(fx.statePath);
+  state.tasks[1].status = 'done';
+  writeState(fx.statePath, state);
+  git(fx.MAIN, 'add', '--', rel);
+  git(fx.MAIN, 'commit', '-qm', 'simulated child commit');
+  assertWatchedRecordingRefuses(fx, /controller state tamper.*task 2.*done/);
+});
+
+for (const [name, damage, expected] of [
+  ['corrupt JSON', file => fs.writeFileSync(file, '{'), SyntaxError],
+  ['non-ENOENT I/O', file => { fs.unlinkSync(file); fs.mkdirSync(file); }, { code: 'EISDIR' }],
+]) {
+  test('record-result: ' + name + ' in the watch baseline is not treated as absence', () => {
+    const fx = watchedRecordingFixture();
+    damage(watchBaselinePath(fx.bundleDir, 1));
+    assertWatchedRecordingRefuses(fx, expected);
+  });
+}
+
 test('out-of-scope revert: tracked offender restored via checkout, untracked removed via clean; in-scope work stands', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
@@ -433,6 +522,8 @@ test('interrupted split code commit resumes the second locus without re-committi
   state.active_run.scope = ['src/a.txt', externalFile];
   state.tasks = state.active_run.scope.map((file, i) => ({ id: i + 1, wave: 1, status: 'pending', files: [file] }));
   writeState(fx.statePath, state);
+  writeWatchBaseline(fx.bundleDir, 1, captureWatchBaseline({ mainRoot: fx.MAIN, bundleDir: fx.bundleDir,
+    worktree: fx.WT, slug: state.slug, scopePaths: state.active_run.scope }));
   write(fx.WT, 'src/a.txt', 'A\n');
   write(sibling, 'b.txt', 'B\n');
   const secondBase = git(sibling, 'rev-parse', 'HEAD');

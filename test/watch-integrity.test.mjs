@@ -199,6 +199,37 @@ test('writeWatchBaseline: uses atomic tmp+rename', () => {
 
 // ── MAIN_TRANSACTION_FILES ──────────────────────────────────────────────────
 
+test('readWatchBaseline: propagates corrupt JSON and non-ENOENT I/O errors', () => {
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-watch-corrupt-'));
+  const file = watchBaselinePath(dir, 1);
+  assert.equal(readWatchBaseline(dir, 1), null);
+  fs.writeFileSync(file, '{');
+  assert.throws(() => readWatchBaseline(dir, 1), SyntaxError);
+  fs.writeFileSync(file, 'null');
+  assert.throws(() => readWatchBaseline(dir, 1), /watch baseline/);
+  fs.unlinkSync(file);
+  fs.mkdirSync(file);
+  assert.throws(() => readWatchBaseline(dir, 1), { code: 'EISDIR' });
+});
+
+test('writeWatchBaseline: each publication uses its own transaction temp file', (t) => {
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-watch-temp-'));
+  const rename = t.mock.method(fs, 'renameSync');
+  writeWatchBaseline(dir, 1, { snapshots: {} });
+  writeWatchBaseline(dir, 1, { snapshots: {} });
+  const temps = rename.mock.calls.map(({ arguments: [tmp, target] }) => {
+    assert.equal(target, watchBaselinePath(dir, 1));
+    return path.basename(tmp);
+  });
+  assert.equal(new Set(temps).size, 2);
+  for (const tmp of temps) assert.match(tmp, /^\.wave-1\.watch\.json\.tmp-\d+-[a-f0-9]{8}$/);
+  for (const name of ['state.yml', '.wave-recording.json', 'wave-1.dispatch.json',
+    'wave-1.dispatch.attempt-1', '.wave-1.watch.json']) {
+    assert.ok(MAIN_TRANSACTION_FILES.some(re => re.test(name + '.tmp-123-abcd1234')), name);
+  }
+  assert.deepEqual(fs.readdirSync(dir), ['.wave-1.watch.json']);
+});
+
 test('MAIN_TRANSACTION_FILES: matches state.yml', () => {
   assert.ok(MAIN_TRANSACTION_FILES.some((re) => re.test('state.yml')));
 });

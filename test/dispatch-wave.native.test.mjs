@@ -34,6 +34,7 @@ import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult, authorizeRecording, assertEarlierTaskFilesUnchanged } from '../lib/wave-commit.mjs';
 import { hasWaveRecording, recordingKey } from '../lib/wave-recording.mjs';
+import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 import { captureFullWorkingDiff, rebuildFullWorkingDiff } from '../lib/working-diff.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 import { worktreeBranchFor, worktreePathFor } from '../lib/worktree.mjs';
@@ -698,6 +699,27 @@ test('operator dispositions are durable, idempotent, conflicting re-apply refuse
   assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
 });
 
+test('DF-4: pending task with retired review and no active_run marker cannot stamp its dispatch recorded', async () => {
+  const fx = makeNativeFixture({ slug: 'df4-retired-no-marker' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  const args = { statePath: fx.statePath, wave: 1, taskId: 1, self: fx.self, now: 2200 };
+  const { disposition } = disposeReviewEpisode({ ...args, disposition: 'retire', reason: 'not reviewed' });
+  assert.equal(disposition.reviewed, false);
+  const retired = readWaveDispatchRecord(fx.bundleDir, 1);
+  writeWaveDispatchRecord(fx.bundleDir, 1, { ...retired, status: 'dispatched',
+    result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] } });
+  writeState(fx.statePath, { ...readState(fx.statePath), active_run: null });
+  const recordPath = path.join(fx.bundleDir, 'wave-1.dispatch.json');
+  const before = fs.readFileSync(recordPath, 'utf8');
+  await assert.rejects(() => dispatchWaveViaFabric({ ...args, now: 2300, policy: dispatchFixture }), /DF-4 refused/);
+  assert.equal(fs.readFileSync(recordPath, 'utf8'), before);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
 test('restart records lineage, emits one new persisted subject, and refuses stale bundle copies', async () => {
   const fx = makeNativeFixture({ slug: 'disposition-restart' });
   launchNative(fx);
@@ -827,13 +849,23 @@ test('native review is a no-op when review_context is absent or disabled', async
 
 // x22-auth-path: reproduce the judge's authorization and physical-path probes
 // using disposable bundles only. Output records the actual boundary result.
-async function x22Fixture(slug) {
+async function x22Fixture(slug, { alreadyMarkedAtCapture = false } = {}) {
   const fx = makeNativeFixture({ slug });
   launchNative(fx);
   await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
   record.review_context.episodes['1'] = { hold: 'historical' };
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  if (alreadyMarkedAtCapture) {
+    // These legacy evidence-selection probes need a task that was already done
+    // at the watched boundary. A bare post-launch mark without a recording
+    // journal is now intentionally refused, even with a valid review receipt.
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'done';
+    writeState(fx.statePath, state);
+    writeWatchBaseline(fx.bundleDir, 1, captureWatchBaseline({ mainRoot: fx.MAIN, bundleDir: fx.bundleDir,
+      worktree: fx.WT, slug, scopePaths: state.active_run.scope }));
+  }
   write(fx.WT, 'src/a.txt', 'change\n');
   fx.result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
   fx.args = { statePath: fx.statePath, wave: 1, taskId: 1, self: fx.self, now: 2200, disposition: 'restart' };
@@ -1161,15 +1193,11 @@ for (const partial of [false, true]) {
 
 for (const viaContinue of [false, true]) {
   test(`X22 R3 F3 fresh reject crash restores blocking via ${viaContinue ? 'continue' : 'reconcile'}`, async () => {
-    const fx = await x22Fixture(`x22-r3-crash-reject-${viaContinue}`);
+    const fx = await x22Fixture(`x22-r3-crash-reject-${viaContinue}`, { alreadyMarkedAtCapture: true });
     const restart = disposeReviewEpisode(fx.args);
     const fresh = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
       result: fx.result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
     assert.equal(fresh.tasks[0].review.verdict, 'reject');
-    // Actual step-1 crash window: status is durable, the marker and artifact remain.
-    const state = readState(fx.statePath);
-    state.tasks[0].status = 'done';
-    writeState(fx.statePath, state);
     const history = x22Events(fx);
     const res = viaContinue ? null : recordWaveResult({ statePath: fx.statePath, self: fx.self,
       now: 2400, worktree: fx.WT, result: null });
@@ -1209,7 +1237,7 @@ test('X22 R3 F3 wrong-diff reject event does not satisfy reconcile evidence', as
 for (const verdict of ['approve', 'reject']) {
   for (const committedRecovery of [false, true]) {
     test(`X22 R3 F3 ${verdict} reconciles after code commit (${committedRecovery ? 'recovery' : 'ordinary'})`, async () => {
-      const fx = await x22Fixture(`x22-r3-after-code-${verdict}-${committedRecovery}`);
+      const fx = await x22Fixture(`x22-r3-after-code-${verdict}-${committedRecovery}`, { alreadyMarkedAtCapture: true });
       const restart = disposeReviewEpisode(fx.args);
       let options = {};
       if (committedRecovery) {
@@ -1229,9 +1257,6 @@ for (const verdict of ['approve', 'reject']) {
         git(fx.WT, 'add', 'src/a.txt');
         git(fx.WT, 'commit', '-q', '-m', 'simulate recorder step 4');
       }
-      const state = readState(fx.statePath);
-      state.tasks[0].status = 'done';
-      writeState(fx.statePath, state);
       const res = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2500, worktree: fx.WT, result: null });
       console.log('PROBE R3 after code commit:', JSON.stringify({ verdict, committedRecovery,
         blocking: res.blocking_reviews, cleared: res.cleared }));
@@ -1243,13 +1268,10 @@ for (const verdict of ['approve', 'reject']) {
 }
 
 test('X22 R3 F3 partial result restores omitted fresh rejection', async () => {
-  const fx = await x22Fixture('x22-r3-omitted-reject');
+  const fx = await x22Fixture('x22-r3-omitted-reject', { alreadyMarkedAtCapture: true });
   const restart = disposeReviewEpisode(fx.args);
   await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
     result: fx.result, providedReviews: { 1: workingReceipt(fx, 1, { ...rejectRecord, episode_subject: restart.disposition.subject }) }, policy: dispatchFixture });
-  const state = readState(fx.statePath);
-  state.tasks[0].status = 'done';
-  writeState(fx.statePath, state);
   const out = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
     worktree: fx.WT, result: { wave: 1, tasks: [] } });
   assert.equal(out.blocking_reviews[0]?.verdict, 'reject');
@@ -1396,7 +1418,7 @@ for (const disposition of ['retire', 'restart']) {
 }
 
 // X22 round 4: actual checkpoint approvals, then crash-before-finalize.
-async function x22R4ReviewedFixture(slug, committed = false) {
+async function x22R4ReviewedFixture(slug, committed = false, { marked = true } = {}) {
   const fx = await x22Fixture(slug);
   disposeReviewEpisode(fx.args);
   let recoverySelector;
@@ -1415,9 +1437,11 @@ async function x22R4ReviewedFixture(slug, committed = false) {
       intent_identity: args.intent_identity }), now: 2400 });
   fx.reviewed = { ...fx.result, tasks: reviewed };
   fx.manifest = manifest;
-  const state = readState(fx.statePath);
-  state.tasks[0].status = 'done';
-  writeState(fx.statePath, state);
+  if (marked) {
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'done';
+    writeState(fx.statePath, state);
+  }
   return fx;
 }
 function x22R4RefusedUnchanged(fx, pattern, options = {}) {
@@ -1592,7 +1616,7 @@ for (const carrier of ['stripped', 'input']) {
 for (const carrier of ['input', 'stripped', 'digest']) {
   for (const phaseB of [false, true]) {
     test(`X22a F1 unchanged embedded evidence survives re-ingestion (${carrier}, phase B ${phaseB})`, async () => {
-      const fx = await x22R4ReviewedFixture(`x22a-stable-${carrier}-${phaseB}`);
+      const fx = await x22R4ReviewedFixture(`x22a-stable-${carrier}-${phaseB}`, false, { marked: false });
       const submitted = { ...fx.reviewed, tasks: fx.reviewed.tasks.map((item) => {
         if (carrier === 'stripped') { const { review_input, ...rest } = item; return rest; }
         if (carrier === 'digest') { const { review, ...rest } = item; return rest; }
@@ -1705,7 +1729,7 @@ for (const mixed of [false, true]) {
 }
 
 test('X22a F2 accepts a physical alias of the frozen worktree', async () => {
-  const fx = await x22R4ReviewedFixture('x22a-locus-alias');
+  const fx = await x22R4ReviewedFixture('x22a-locus-alias', false, { marked: false });
   const alias = path.join(fx.tmp, 'worktree-alias');
   fs.symlinkSync(fx.WT, alias, 'dir');
   const out = recordWaveResult({ statePath: fx.statePath, self: fx.self,
@@ -2313,6 +2337,18 @@ test('interrupted native retry: continue refuses missing or inconsistent launch 
   expectRefusal(/missing or inconsistent published retry launch proof/);
   writeState(fx.statePath, { ...state, active_run: { ...state.active_run, scope: ['src/2.txt'] } });
   expectRefusal(/current scope does not match the published retry launch/);
+});
+
+test('interrupted native retry: continue reports corrupt watch JSON instead of assuming a missing baseline', async () => {
+  const fx = await interruptedRetryFixture();
+  write(fx.WT, 'src/2.txt', 'B work to preserve on refusal\n');
+  write(fx.bundleDir, '.wave-1.watch.json', '{');
+  const before = interruptedRetrySnapshot(fx);
+  const op = fx.resume();
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /JSON/);
+  assert.deepEqual(interruptedRetrySnapshot(fx), before);
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/2.txt'), 'utf8'), 'B work to preserve on refusal\n');
 });
 
 test('interrupted native retry: continue preserves an audited extension to the published scope', async () => {

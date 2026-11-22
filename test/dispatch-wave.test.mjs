@@ -49,6 +49,8 @@ import {
   createWaveDispatchRecord,
   writeWaveDispatchRecord,
   claimAttemptMarker,
+  composeWaveToken,
+  waveDispatchAttemptMarkerPath,
   WAVE_DISPATCH_KEY_VERSION,
   captureFullWorkingDiff,
   buildNativeSpawnPlan,
@@ -59,10 +61,11 @@ import {
 } from '../lib/dispatch-wave.mjs';
 import { buildWaveLaunchContext } from '../lib/wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
-import { readState, writeState } from '../lib/bundle.mjs';
+import { appendEvent, readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { buildTaskReviewEvent } from '../lib/reentry-guard.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { watchBaselinePath, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -310,6 +313,101 @@ test("a 'dispatched' record re-drives record-result from the stored digests — 
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
 });
 
+function redriveFixture(slug, tasks = [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }]) {
+  const fx = makeFixture({ slug, tasks, planIndex: tasks.map(t => planEntry(t.id, t.wave, t.files)),
+    extra: { concurrency: { owner_lock: 'off' } } });
+  const existing = { key: composeWaveDispatchKey(slug, 1), run_id: slug, wave: 1, attempt: 1,
+    status: 'dispatched', result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] } };
+  fx.save = () => writeWaveDispatchRecord(fx.bundleDir, 1, existing);
+  fx.redrive = () => dispatchWaveViaFabric({ statePath: fx.statePath, wave: 1, now: 5000 });
+  return { ...fx, existing };
+}
+
+test('DF-4: crash after an authorized recording reconstructs the dispatch outcome from durable evidence', async () => {
+  const fx = redriveFixture('dw-redrive-durable');
+  launchViaContinue(fx);
+  fx.save(); // The wrapper's record stays dispatched if it dies before updating it.
+  const wt = readState(fx.statePath).worktree;
+  write(wt, 'src/a.txt', 'authorized code\n');
+  const out = recordWaveResult({ statePath: fx.statePath, result: fx.existing.result, now: 4000 });
+  assert.equal(out.cleared, true);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'dispatched');
+  const event = readEvents(fx.bundleDir).at(-1);
+  const res = await fx.redrive();
+  assert.equal(res.status, 'recorded');
+  assert.equal(res.record.completed_at, new Date(5000).toISOString());
+  assert.deepEqual(res.record_result, { outcome: 'already-finalized', recorded: [1], failed: [], cleared: true });
+  assert.deepEqual(res.record.record_outcome, { recorded: [1], failed: [], cleared: true,
+    commits: { code: out.commits.code, code_by_repo: out.commits.code_by_repo }, note: event.note });
+});
+
+for (const kind of ['missing log', 'corrupt log', 'legacy note', 'wrong wave', 'latest empty', 'pending task', 'unknown task']) {
+  test('DF-4: refuses without durable evidence (' + kind + ')', async () => {
+    const status = kind === 'pending task' ? 'pending' : 'done';
+    const fx = redriveFixture('dw-redrive-no-proof', [{ id: 1, status, wave: 1 }]);
+    fx.save();
+    const event = { type: 'wave_recorded', wave: 1, recorded: [1], failed: [], cleared: true };
+    switch (kind) {
+      case 'missing log': break;
+      case 'corrupt log': appendEvent(fx.statePath, event); fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), '{\n'); break;
+      case 'legacy note': appendEvent(fx.statePath, { type: 'wave_recorded', note: 'wave 1 result: 1 done' }); break;
+      case 'wrong wave': appendEvent(fx.statePath, { ...event, wave: 2 }); break;
+      case 'latest empty': appendEvent(fx.statePath, event); appendEvent(fx.statePath, { ...event, recorded: [] }); break;
+      case 'unknown task': appendEvent(fx.statePath, { ...event, recorded: [99] }); break;
+      default: appendEvent(fx.statePath, event);
+    }
+    const file = waveDispatchRecordPath(fx.bundleDir, 1);
+    const before = fs.readFileSync(file, 'utf8');
+    await assert.rejects(fx.redrive, /DF-4 refused/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+  });
+}
+
+test('DF-4: failure-only recording that clears the marker writes record_error and cannot finalize on redrive', async () => {
+  const fx = redriveFixture('dw-redrive-zero');
+  launchViaContinue(fx);
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'done';
+  writeState(fx.statePath, state);
+  fx.existing.result.tasks[0].digest.status = 'failed';
+  fx.save();
+  const res = await fx.redrive();
+  assert.equal(res.record_result.cleared, true);
+  assert.deepEqual(res.record_result.recorded, []);
+  assert.equal(res.status, 'dispatched');
+  assert.deepEqual(res.record.record_error, { outcome: 'recorded', reason: 'record-result recorded no tasks', recorded: [] });
+  assert.equal(readState(fx.statePath).active_run, null);
+  await assert.rejects(fx.redrive, /DF-4 refused/);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'dispatched');
+});
+
+for (const mixed of [true, false]) {
+  test('DF-4: retains blocking_reviews and review_rework ' + (mixed ? 'with recorded tasks' : 'for rework only'), async () => {
+    const tasks = (mixed ? [1, 2] : [1]).map(id => ({ id, status: 'pending', wave: 1, files: ['src/' + id + '.txt'] }));
+    const fx = redriveFixture('dw-redrive-rework', tasks);
+    launchViaContinue(fx);
+    fx.existing.result.tasks = tasks.map(t => ({ task_id: t.id, digest: workerDigest(t.id),
+      ...(t.id === tasks.at(-1).id ? { review: { verdict: 'blocking', findings: 'needs correction' } } : {}) }));
+    fx.save();
+    const res = await fx.redrive();
+    assert.equal(res.status, 'recorded');
+    const { recorded, review_rework, blocking_reviews } = res.record_result;
+    assert.deepEqual(recorded, mixed ? [1] : []);
+    assert.deepEqual(review_rework, [tasks.at(-1).id]);
+    assert.equal(blocking_reviews[0].id, tasks.at(-1).id);
+    assert.deepEqual(res.record.record_outcome.review_rework, review_rework);
+    assert.deepEqual(res.record.record_outcome.blocking_reviews, blocking_reviews);
+    // Exercise replay of the historical event without re-evaluating the review.
+    const state = readState(fx.statePath);
+    writeState(fx.statePath, { ...state, active_run: null });
+    fx.save();
+    const recovered = await fx.redrive();
+    assert.deepEqual(recovered.record_result, { outcome: 'already-finalized', recorded, failed: [], cleared: false });
+    assert.deepEqual(recovered.record.record_outcome.review_rework, review_rework);
+    assert.deepEqual(recovered.record.record_outcome.blocking_reviews, blocking_reviews);
+  });
+}
+
 test('no pending tasks in the wave → no dispatch (nothing to do)', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
@@ -422,6 +520,8 @@ test('concurrent retry (pre-claimed attempt marker): the second writer observes 
   // A concurrent retry already claimed attempt 2 (its record rewrite may not have
   // landed yet) — this writer MUST lose the O_EXCL claim and not dispatch.
   assert.equal(claimAttemptMarker(fx.bundleDir, 1, 2, { key: res1.key }).claimed, true);
+  const watchPath = watchBaselinePath(fx.bundleDir, 1);
+  const winnerBaseline = fs.readFileSync(watchPath, 'utf8');
   const res2 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2100,
   });
@@ -429,6 +529,7 @@ test('concurrent retry (pre-claimed attempt marker): the second writer observes 
   assert.equal(res2.dispatched, false);
   assert.match(res2.reason, /attempt-2 claim race/);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).attempt, 1, 'the loser did not transition the record');
+  assert.equal(fs.readFileSync(watchPath, 'utf8'), winnerBaseline, 'the loser did not replace the watch baseline');
 });
 
 test('routing-input parity: a codex-suppressed host produces descriptors identical to the launch op payload, and the inputs are frozen in the record', async () => {
@@ -1038,6 +1139,133 @@ test('acquireAndWatch: returns attempt and waveToken when precheck passes', () =
   assert.ok(result.watchBaseline);
   assert.equal(result.record.review_context?.enabled, true);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1)?.status, 'pending');
+});
+
+test('claimAttemptMarker: a complete claim is published exclusively by hard link', (t) => {
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-attempt-claim-'));
+  const target = waveDispatchAttemptMarkerPath(dir, 1, 1);
+  const realLink = fs.linkSync;
+  const link = t.mock.method(fs, 'linkSync', (tmp, dest) => {
+    assert.equal(dest, target);
+    assert.match(tmp.slice(target.length), /^\.tmp-\d+-[a-f0-9]{8}$/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(tmp, 'utf8')), {
+      wave: 1, attempt: 1, claimed_at: new Date(2000).toISOString(), key: 'key',
+      session: 'session', pid: process.pid, host: os.hostname(), wave_token: 'token',
+    });
+    return realLink(tmp, dest);
+  });
+  const meta = { now: 2000, key: 'key', session: 'session', waveToken: 'token' };
+  assert.deepEqual(claimAttemptMarker(dir, 1, 1, meta), { claimed: true });
+  const first = fs.statSync(target);
+  assert.deepEqual(claimAttemptMarker(dir, 1, 1, meta), { claimed: false });
+  assert.equal(fs.statSync(target).ino, first.ino);
+  assert.equal(link.mock.callCount(), 2);
+  assert.notEqual(link.mock.calls[0].arguments[0], link.mock.calls[1].arguments[0]);
+  assert.deepEqual(fs.readdirSync(dir), [path.basename(target)]);
+});
+
+function launchClaimFixture(slug) {
+  const fx = makeFixture({ slug, tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])], extra: { concurrency: { owner_lock: 'off' } } });
+  launchViaContinue(fx);
+  const args = prepareAcquireArgs(fx);
+  const marker = attempt => waveDispatchAttemptMarkerPath(fx.bundleDir, 1, attempt);
+  const claim = (attempt, fields = {}) => {
+    const bytes = JSON.stringify({ key: args.key, wave: 1, attempt, host: os.hostname(), pid: 12345, ...fields });
+    fs.writeFileSync(marker(attempt), bytes);
+    return bytes;
+  };
+  return { ...fx, args, marker, claim, watch: watchBaselinePath(fx.bundleDir, 1) };
+}
+
+test('concurrent initial attempt: the contender leaves the winner watch baseline byte-for-byte intact', () => {
+  const fx = launchClaimFixture('dw-initial-race');
+  const winner = acquireAndWatch(fx.args);
+  assert.equal(winner.attempt, 1);
+  const baseline = fs.readFileSync(fx.watch, 'utf8');
+  write(fx.MAIN, 'distinct-contender-snapshot.txt', 'new state after the winner captured its baseline\n');
+  const contender = acquireAndWatch(fx.args); // the pre-claim read still says no record
+  assert.equal(contender.outcome, 'reused');
+  assert.equal(contender.dispatched, false);
+  assert.match(contender.reason, /attempt-1 claim race/);
+  assert.deepEqual(contender.record, readWaveDispatchRecord(fx.bundleDir, 1));
+  assert.equal(fs.readFileSync(fx.watch, 'utf8'), baseline);
+});
+
+test('claim recovery: rereads dispatch after the dead-PID check and never launches K+1 over a committed K', () => {
+  const fx = launchClaimFixture('dw-dead-after-commit');
+  const existing = { key: fx.args.key, wave: 1, attempt: 1, status: 'pending' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, existing);
+  fx.claim(2);
+  const winner = { ...existing, attempt: 2, wave_token: composeWaveToken(fx.args.runId, 1, 2) };
+  const res = acquireAndWatch({ ...fx.args, existing, takeover: true, _isPidAlive: pid => {
+    assert.equal(pid, 12345);
+    writeWatchBaseline(fx.bundleDir, 1, { winner: true });
+    writeWaveDispatchRecord(fx.bundleDir, 1, winner);
+    return false;
+  } });
+  assert.equal(res.outcome, 'reused');
+  assert.equal(res.dispatched, false);
+  assert.deepEqual(res.record, winner);
+  assert.deepEqual(readWaveDispatchRecord(fx.bundleDir, 1), winner);
+  assert.deepEqual(JSON.parse(fs.readFileSync(fx.watch, 'utf8')), { winner: true });
+  assert.equal(fs.existsSync(fx.marker(3)), false);
+});
+
+for (const hasBaseline of [false, true]) {
+  test('claim recovery: skips a dead local claimant ' + (hasBaseline ? 'after baseline' : 'before baseline'), () => {
+    const fx = launchClaimFixture('dw-dead-claim');
+    const existing = hasBaseline ? { key: fx.args.key, wave: 1, attempt: 3, status: 'pending', abandoned_claims: [1, 2] } : null;
+    const lost = hasBaseline ? 4 : 1;
+    if (existing) writeWaveDispatchRecord(fx.bundleDir, 1, existing);
+    const abandoned = fx.claim(lost);
+    if (hasBaseline) writeWatchBaseline(fx.bundleDir, 1, { abandoned: true });
+    const res = acquireAndWatch({ ...fx.args, existing, takeover: hasBaseline, _isPidAlive: pid => {
+      assert.equal(pid, 12345);
+      return false;
+    } });
+    assert.equal(res.attempt, lost + 1);
+    assert.equal(res.waveToken, composeWaveToken(fx.args.runId, 1, lost + 1));
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    assert.equal(record.status, 'pending');
+    assert.equal(record.wave_token, res.waveToken);
+    assert.deepEqual(record.abandoned_claims, [...(existing?.abandoned_claims ?? []), lost]);
+    assert.equal(fs.readFileSync(fx.marker(lost), 'utf8'), abandoned);
+    assert.equal(JSON.parse(fs.readFileSync(fx.marker(lost + 1), 'utf8')).wave_token, res.waveToken);
+    assert.equal(JSON.parse(fs.readFileSync(fx.watch, 'utf8')).bundle.bundleDir, fx.bundleDir);
+  });
+}
+
+for (const [kind, fields] of [
+  ['malformed', null], ['foreign', { host: 'another-host' }], ['wrong key', { key: 'foreign-key' }],
+  ['missing PID', { pid: undefined }], ['invalid PID', { pid: -1 }], ['live', {}],
+]) {
+  test('claim recovery: refuses to advance over claim with ' + kind + ' evidence', () => {
+    const fx = launchClaimFixture('dw-uncertain-claim');
+    if (fields) fx.claim(1, fields);
+    else fs.writeFileSync(fx.marker(1), '{');
+    const res = acquireAndWatch({ ...fx.args, _isPidAlive: () => {
+      assert.equal(kind, 'live', 'only a valid local claimant should have its PID probed');
+      return true;
+    } });
+    assert.equal(res.outcome, 'reused');
+    assert.equal(res.dispatched, false);
+    assert.equal(res.record, null);
+    assert.match(res.reason, /attempt-1 claim race/);
+    assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null);
+    assert.equal(fs.existsSync(fx.watch), false);
+    assert.equal(fs.existsSync(fx.marker(2)), false);
+  });
+}
+
+test('claim recovery: refuses after 16 dead claims without publishing another attempt', () => {
+  const fx = launchClaimFixture('dw-claim-bound');
+  const bytes = Array.from({ length: 16 }, (_, i) => fx.claim(i + 1));
+  assert.throws(() => acquireAndWatch({ ...fx.args, _isPidAlive: () => false }), /16.*attempt claims/);
+  assert.deepEqual(bytes.map((_, i) => fs.readFileSync(fx.marker(i + 1), 'utf8')), bytes);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null);
+  assert.equal(fs.existsSync(fx.watch), false);
+  assert.equal(fs.existsSync(fx.marker(17)), false);
 });
 
 // ---------------------------------------------------------------------------

@@ -274,6 +274,24 @@ test('committed-locus: disabled review_context fails preflight (never a silent o
   );
 });
 
+for (const [kind, damage, expected] of [
+  ['corrupt JSON', file => fs.writeFileSync(file, '{'), SyntaxError],
+  ['non-ENOENT I/O', file => { fs.unlinkSync(file); fs.mkdirSync(file); }, { code: 'EISDIR' }],
+]) {
+  test('committed-locus: recovery preflight propagates ' + kind + ' from its watch baseline', (t) => {
+    const fx = makeCommittedLocusFixture();
+    t.after(() => fs.rmSync(fx.tmp, { recursive: true, force: true }));
+    const state = readState(fx.statePath);
+    damage(fx.baselinePath);
+    assert.throws(() => preflightRecovery({ statePath: fx.statePath, state, run: state.active_run, wave: 1,
+      WT: fx.WT, MAIN: fx.MAIN, slug: state.slug, captureWtFiles: () => [], captureWorkspaceRoot: () => [],
+      recoverySelector: { repo: fx.WT, head: fx.HEAD } }), expected);
+    assert.deepEqual(readState(fx.statePath), state);
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.HEAD);
+    assert.equal(fs.existsSync(path.join(fx.bundleDir, 'events.jsonl')), false);
+  });
+}
+
 test('committed-locus: a launch baseline whose edit-locus HEAD differs from the frozen base is rejected', () => {
   // R6: the ORIGINAL-baseline head constraint is enforced in verifyRecoverySelector
   // BEFORE compareWatchWithRecoveryHead substitutes the recovered head. A baseline

@@ -65,7 +65,7 @@ reads the live return shape, not the doc).
 **Resolution shape:** Repoint the reference to `parts/contracts/brainstorm-anchor.md`
 (one-line edit) in the next pass that touches `parts/step-b.md`.
 
-## DF-4 — Re-drive stamps completion without authorization — **OPEN (X22a, 2026-09-30)**
+## DF-4 — Re-drive stamps completion without authorization — **RESOLVED**
 
 **Finding (MEDIUM, pre-existing from `0dbed78` onward):**
 `redriveRecordTransaction` in `lib/dispatch-wave.mjs` catches the recorder's
@@ -92,10 +92,14 @@ review documents record the reproduction and observed outputs.
 
 **Why deferred:** Amendment X22a classifies this as an unrelated existing
 shortcut on no X22 disposition-consumption path, outside Task 5's recorder
-repair scope. Tracking is not remediation; the shortcut remains unchanged.
+repair scope. X22a tracked this finding without changing the shortcut.
 
-**Resolution shape:** Require durable evidence of a previously authorized
-finalization before the no-marker shortcut; otherwise refuse. Extend structural
-coverage to dispatch-wrapper completion writes, not only `recordWaveResult`.
-Resolve as a separately authorized change without historical identity recovery
-or receipt migration.
+**Resolution:** `recordWaveResult` writes a structured `wave_recorded` event.
+Without an active marker, the dispatch wrapper requires the latest structured
+summary for the wave to show recorded tasks or review rework, and checks that
+all recorded tasks are no longer pending or in progress. Otherwise it leaves
+the dispatch record unchanged. Legacy note-only events are not proof, and
+historical review receipts are not re-evaluated. The wrapper also leaves
+failure-only results unrecorded and preserves review rework and blocking reviews
+when finalizing. See the DF-4 regressions in `test/dispatch-wave.test.mjs` and
+`test/dispatch-wave.native.test.mjs`.
