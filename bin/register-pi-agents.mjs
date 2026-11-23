@@ -18,9 +18,9 @@
 // script MUTATES ~/.pi/agent/agents/ in write mode, so an unknown flag must never
 // fall through to a write (the A6 repair — previously `--help`/any typo ran a full
 // write and exited 0).
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 
@@ -320,5 +320,13 @@ function main() {
   }
 }
 
+function isMain() {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
 // Run main() only when executed directly (not when imported by tests).
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main();
+if (isMain()) main();

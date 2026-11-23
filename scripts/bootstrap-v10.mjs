@@ -20,10 +20,10 @@ function canonicalJson(value) {
 export function targetsDigest(targets) {
   return createHash('sha256').update(canonicalJson(targets)).digest('hex'); // every nested key counts
 }
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { appendEvent, readState, validateEvent, BOOTSTRAP_STEPS, normalizeLegacyEventShape } from '../lib/bundle.mjs';
 
@@ -2128,6 +2128,14 @@ function main() {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+function isMain() {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   main();
 }

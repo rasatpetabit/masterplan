@@ -1632,3 +1632,24 @@ test('plan-doc-cruft: combined alternation regex preserves overlapping slug hits
   assert.match(warn.summary, /\bt9 \(filename, bundle-path reference\)/);
   assert.match(warn.summary, /\bt9-cleanup \(filename, bundle-path reference, heading\)/);
 });
+
+test('symlinked current dir: bin/doctor.mjs runs main() when invoked through a symlinked parent dir', async () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-doctor-symlink-'));
+  const repoRoot = path.resolve(here, '..');
+  const currentLink = path.join(tmp, 'current');
+  fs.symlinkSync(repoRoot, currentLink);
+  const targetRepo = path.join(tmp, 'repo');
+  fs.mkdirSync(targetRepo, { recursive: true });
+  const res = spawnSync(process.execPath, [path.join(currentLink, 'bin', 'doctor.mjs'), '--only=state-schema', targetRepo], {
+    encoding: 'utf8',
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /state-schema/, `expected check output via symlinked entrypoint, got stdout=${JSON.stringify(res.stdout)}`);
+  assert.match(res.stdout, /masterplan doctor: 1 finding\(s\)/, 'expected doctor summary line via symlinked entrypoint');
+});
+
+test('dynamic import of bin/doctor.mjs does not execute main() or alter exitCode', async () => {
+  const mod = await import(`../bin/doctor.mjs?probe=${Date.now()}`);
+  assert.equal(typeof mod.runChecks, 'function');
+  assert.equal(process.exitCode ?? 0, 0);
+});

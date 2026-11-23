@@ -5303,7 +5303,7 @@ function coerceId(v) {
 // (which need formatBanner/applyPlanIndex without triggering the CLI dispatch + process.exit).
 function isMain() {
   try {
-    return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+    return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false; // argv[1] not a real path (e.g. `node --test`) -> imported, not executed
   }

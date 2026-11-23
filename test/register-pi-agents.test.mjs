@@ -622,3 +622,29 @@ jointTest('all eight registered aliases preserve their custom contracts through 
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(JSON.parse(result.stdout.trim()), { agents: 8, breakerAliases: 5, children: 39, staleChildren: 15 });
 });
+
+test('symlinked current dir: bin/register-pi-agents.mjs runs main() when invoked through a symlinked parent dir', async () => {
+  const tmp = mkdtempTracked(join(tmpdir(), 'mp-reg-symlink-'));
+  const currentLink = join(tmp, 'current');
+  const { symlinkSync } = await import('node:fs');
+  symlinkSync(repoRoot, currentLink);
+
+  const helpRes = spawnSync(process.execPath, [join(currentLink, 'bin', 'register-pi-agents.mjs'), '--help'], {
+    encoding: 'utf8',
+  });
+  assert.equal(helpRes.status, 0, helpRes.stderr);
+  assert.match(helpRes.stdout, /Usage: node bin\/register-pi-agents\.mjs/, `expected usage output via symlink, got stdout=${JSON.stringify(helpRes.stdout)}`);
+
+  const home = join(tmp, 'home');
+  mkdirSync(home, { recursive: true });
+  const checkRes = spawnSync(process.execPath, [join(currentLink, 'bin', 'register-pi-agents.mjs'), '--check'], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  });
+  assert.equal(checkRes.status, 1, `expected exit 1 on empty disposable HOME drift check, got ${checkRes.status}`);
+  assert.match(checkRes.stderr, /register-pi-agents:/, `expected check stderr via symlink, got stderr=${JSON.stringify(checkRes.stderr)}`);
+
+  // Dynamic import does not execute main()
+  const mod = await import(`../bin/register-pi-agents.mjs?probe=${Date.now()}`);
+  assert.equal(typeof mod.runRegister, 'function');
+});

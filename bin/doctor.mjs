@@ -10,7 +10,7 @@
 // (crash-isolated), aggregates, prints, and exits non-zero iff any finding is ERROR. No check
 // logic lives here. Replaces v7's 2,116-line parts/doctor.md (53 prose checks; deleted at the cutover) with 13
 // testable modules; the ~38 self-instrumentation checks are deleted, release-hygiene -> CI.
-import { readdirSync } from 'node:fs';
+import { readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readEnv } from '../lib/config.mjs';
@@ -217,6 +217,14 @@ async function main() {
   process.exitCode = exitCode;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+function isMain() {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   await main();
 }

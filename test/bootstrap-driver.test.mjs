@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { writeState, appendEvent, validateEvent } from '../lib/bundle.mjs';
 import { surfaceExecVersion } from '../scripts/bootstrap-v10.mjs';
@@ -2319,5 +2320,22 @@ test("surfaces_live probe: surfaceExecVersion anchors on the documented CC-2 ban
   assert.equal(surfaceExecVersion(mk(out(pathOnly))), null, 'a path-only output is not a version');
   assert.equal(surfaceExecVersion(mk('process.exit(3)')), null, 'a dying entry point is not a version');
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('symlinked current dir: scripts/bootstrap-v10.mjs runs main() when invoked through a symlinked parent dir', { concurrency: true }, async () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bs-symlink-'));
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const currentLink = path.join(tmp, 'current');
+  fs.symlinkSync(repoRoot, currentLink);
+
+  const res = spawnSync(process.execPath, [path.join(currentLink, 'scripts', 'bootstrap-v10.mjs')], {
+    encoding: 'utf8',
+  });
+  assert.equal(res.status, 2, `expected usage exit 2 via symlink, got status=${res.status}`);
+  assert.match(res.stderr, /usage: node scripts\/bootstrap-v10\.mjs/, `expected usage output via symlink, got stderr=${JSON.stringify(res.stderr)}`);
+
+  // Dynamic import does not execute main()
+  const mod = await import(`../scripts/bootstrap-v10.mjs?probe=${Date.now()}`);
+  assert.equal(typeof mod.bootstrapStatus, 'function');
 });
 });
