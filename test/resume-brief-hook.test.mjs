@@ -251,3 +251,65 @@ command = [
   const findings = check('/tmp/repo', { policyPath });
   assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
 });
+
+test('resume-brief-hook: PASS for single-quoted array element containing # (valid TOML literal string)', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = ['node', '/usr/local/bin/mp', 'resume-brief', '--repo-root=$CWD', 'x # literal']
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
+
+  // In TOML single-quoted literal strings, backslash is literal (not an escape), so 'x\\' closes cleanly before # comment.
+  const backslashPolicy = writePolicy(`[rules.resume_brief]
+events = ['session_start']
+command = ['node', '/usr/local/bin/mp', 'resume-brief', '--repo-root=$CWD', 'x\\\\'] # trailing comment
+`);
+  assert.equal(check('/tmp/repo', { policyPath: backslashPolicy })[0].severity, 'PASS');
+});
+
+test('resume-brief-hook: PASS for trailing # comment after array', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = ['node', '/usr/local/bin/mp', 'resume-brief', '--repo-root=$CWD'] # trailing comment
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
+});
+
+test('resume-brief-hook: PASS for legal trailing comma in single-line command array', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = ["node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD",]
+`);
+  const findings = check('/tmp/repo', { policyPath });
+  assert.equal(findings[0].severity, 'PASS', JSON.stringify(findings));
+});
+
+test('resume-brief-hook: PASS for single-quoted scalar command with and without #', () => {
+  const policyPath = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = 'node /usr/local/bin/mp resume-brief --repo-root=$CWD'
+`);
+  assert.equal(check('/tmp/repo', { policyPath })[0].severity, 'PASS');
+
+  const policyWithHash = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = 'node /usr/local/bin/mp resume-brief --repo-root=$CWD --tag=#lit' # comment
+`);
+  assert.equal(check('/tmp/repo', { policyPath: policyWithHash })[0].severity, 'PASS');
+});
+
+test('resume-brief-hook: WARN for malformed TOML arrays (missing comma, repeated comma, leading comma, trailing junk)', () => {
+  const cases = [
+    ['missing comma', '["node" "/usr/local/bin/mp" "resume-brief" "--repo-root=$CWD"]'],
+    ['repeated comma', '["node",, "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"]'],
+    ['leading comma', '[,"node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"]'],
+    ['trailing junk', '["node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"] junk'],
+  ];
+  for (const [label, arr] of cases) {
+    const policyPath = writePolicy(`[rules.resume_brief]\nevents = ["session_start"]\ncommand = ${arr}\n`);
+    const findings = check('/tmp/repo', { policyPath });
+    assert.equal(findings[0].severity, 'WARN', `${label} must WARN, got ${JSON.stringify(findings)}`);
+  }
+});
