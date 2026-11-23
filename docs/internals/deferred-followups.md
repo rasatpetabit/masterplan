@@ -103,3 +103,18 @@ historical review receipts are not re-evaluated. The wrapper also leaves
 failure-only results unrecorded and preserves review rework and blocking reviews
 when finalizing. See the DF-4 regressions in `test/dispatch-wave.test.mjs` and
 `test/dispatch-wave.native.test.mjs`.
+
+## DF-5 — Joint tests (`W=/srv/workflows`) target unmerged `routing R1` modules — **OPEN (external contract absent on `/srv/workflows` `master`)**
+
+**Finding (pre-existing on `origin/main`, verified 2026-11-23 against `/srv/workflows` `f32782b1`):**
+Running `W=/srv/workflows npm run test:joint` fails 6 of 249 tests (243 pass / 6 fail):
+- `test/dispatch-wave.native.test.mjs:214` (via `test/fixtures/task5-panel-integration.mjs:13`) imports `pi-subagents/engine/standalone/resolve-dispatch.mjs` (`resolveDispatch`, `executePanel`).
+- `test/register-pi-agents.test.mjs:466,521` imports `pi-subagents/engine/agent-prompt.ts` (`prepareGovernedAgentForDispatch`, `MissingUsecaseSectionError`), `pi-subagents/engine/runtime-model-resolver.ts` (`createDispatchCoreModelResolver`), `pi-subagents/subagents/src/agents/agents.ts` (`readGovernedBreakerTools`), and reads `pi-subagents/subagents/test/support/agent-usecase-fixture.json`.
+- `test/routing-consumer-integration.test.mjs:94,182,220` requires `pi-subagents/engine/standalone/resolve-dispatch.mjs`, `pi-subagents/engine/runs/shared/review-admission.ts`, and `pi-subagents/engine/runs/shared/dispatch-receipt.ts`.
+
+**Root cause:** None of those five paths or ten symbols exist in `/srv/workflows` `master` source (`f32782b1`). They were never merged to `master` and survive only on archived dev-clone refs (`refs/archive/2026-10-07/dev/fix/task11-supervision-restoration` `128de3e0d`, `refs/archive/2026-10-07/prod/model-routing/r1`) and as strings in an older compiled bundle. Current `/srv/workflows` `master` does not implement usecase-section prompt preparation, governed breaker tool allowlist stripping, or a generic dispatch-map `executePanel` coordinator (its separate modules — `engine/standalone/runtime-routing.mjs`, `engine/runs/shared/subagent-prompt-runtime.ts`, `pi-dynamic-workflows/src/review-admission.ts`, and `engine/shared/dispatch-receipt.ts` — expose a different contract).
+
+**Why deferred:** Resolving the gap requires a cross-repo decision on whether `/srv/workflows` `master` will land the C2/C4 `routing R1` interface or whether `masterplan`'s joint tests should be re-targeted to `master`'s actual dispatch/review-admission/receipt exports.
+
+**Resolution shape:** Once the target `/srv/workflows` contract is settled, either run `test:joint` against the checkout implementing C2/C4 or migrate the 6 joint tests (and `test/fixtures/task5-panel-integration.mjs`) to the supported `master` modules without weakening behavioral assertions.
+
