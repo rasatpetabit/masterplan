@@ -252,8 +252,8 @@ function findProcessEnvTokens(source, rel) {
 }
 
 // The ONE module allowed to touch process.env directly: the readEnv/childEnv seam. Every read
-// there flows through readEnv(name, env); its tokens are the four `env = process.env`
-// injection defaults (readEnv, childEnv, resolveRunConfig, resolveDoneAtRevision).
+// there flows through readEnv(name, env); its tokens are the five `env = process.env`
+// injection defaults (readEnv, childEnv, gitEnv, resolveRunConfig, resolveDoneAtRevision).
 const SEAM_FILE = 'lib/config.mjs';
 
 // Closed seam allowlist — every OTHER process.env token in lib/ and bin/, exact file:line,
@@ -358,8 +358,8 @@ test('inventory: no direct process.env tokens outside the readEnv seam and the c
     `stale seam-allowlist entries (site no longer present in source): ${stale.join(', ') || '(none)'}`);
   // The seam file is exempt but must actually be exercised — pin its EXACT token set so a
   // broken seam scan (or a new unexamined process.env in config.mjs) fails loudly.
-  assert.equal(seamTokens.length, 4,
-    `expected exactly the four env-injection defaults in the readEnv seam (lib/config.mjs), got ${seamTokens.length}:\n${seamTokens.map((t) => `${t.at} (${t.snippet})`).join('\n')}`);
+  assert.equal(seamTokens.length, 5,
+    `expected exactly the five env-injection defaults in the readEnv seam (lib/config.mjs), got ${seamTokens.length}:\n${seamTokens.map((t) => `${t.at} (${t.snippet})`).join('\n')}`);
   // The allowlist is closed and minimal: pin its EXACT membership in both directions above
   // (uncovered = no missing entries, stale = no extra entries).
   assert.equal(otherTokens.length, CLOSED_SEAM_ALLOWLIST.length,

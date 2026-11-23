@@ -10,7 +10,6 @@
 // Every fixture is a real git repo driven through the real finish-step machine.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { finishStep } from '../lib/finish-step.mjs';
 import { writeState, readState } from '../lib/bundle.mjs';
 import { goalsHash } from '../lib/goals.mjs';
+import { runGit } from './helpers/git-env.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -34,7 +34,7 @@ after(() => {
 });
 
 function git(dir, ...args) {
-  return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
+  return runGit(dir, args);
 }
 function write(root, rel, content) {
   const p = path.join(root, rel);

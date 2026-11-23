@@ -21,8 +21,9 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { gitEnv } from '../lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -30,8 +31,8 @@ const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 
 function resolveRepoRoot() {
   try {
-    const out = execSync('git rev-parse --show-toplevel', {
-      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: REPO_ROOT, encoding: 'utf8', env: gitEnv(), stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (out) return out;
   } catch { /* fall through to module-derived root */ }

@@ -26,6 +26,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { appendEvent, readState, validateEvent, BOOTSTRAP_STEPS, normalizeLegacyEventShape } from '../lib/bundle.mjs';
+import { gitEnv } from '../lib/config.mjs';
 
 // The bundle's event ledger, read from disk on every call (status is never reconstructed from memory).
 export function readBundleEvents(statePath) {
@@ -221,7 +222,7 @@ export function q(value) {
 // ---- git helpers -------------------------------------------------------------
 
 function git(repo, args) {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: gitEnv({}, undefined, { stripIndex: true }), stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 function isAncestor(repo, a, b) {
   try {

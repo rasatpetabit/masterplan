@@ -5,8 +5,8 @@
   "type": "module",
   "description": "masterplan clean-core rebuild (v8) \u2014 brainstorm\u2192plan\u2192execute\u2192finish orchestrator on native Claude Code primitives.",
   "scripts": {
-    "test": "MASTERPLAN_STANDALONE_CI=1 node --test --test-concurrency=12 test/*.test.mjs",
-    "test:joint": "env -u MASTERPLAN_STANDALONE_CI node --test --test-concurrency=4 test/register-pi-agents.test.mjs test/routing-consumer-integration.test.mjs test/dispatch-wave.native.test.mjs",
+    "test": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX MASTERPLAN_STANDALONE_CI=1 node --test --test-concurrency=12 test/*.test.mjs",
+    "test:joint": "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX -u MASTERPLAN_STANDALONE_CI node --test --test-concurrency=4 test/register-pi-agents.test.mjs test/routing-consumer-integration.test.mjs test/dispatch-wave.native.test.mjs",
     "doctor": "node bin/doctor.mjs"
   },
   "engines": {

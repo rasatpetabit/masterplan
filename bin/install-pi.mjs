@@ -31,7 +31,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runRegister } from './register-pi-agents.mjs';
-import { readEnv, childEnv } from '../lib/config.mjs';
+import { readEnv, childEnv, gitEnv } from '../lib/config.mjs';
 
 const INSTALL_META = '.pi-install.json';
 const RELEASES_DIR = 'releases';
@@ -133,13 +133,13 @@ function parseArgs(argv) {
 function defaultSource() {
   // The repo this script is installed in (bin/ sits at the repo root).
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const r = spawnSync('git', ['-C', path.join(here, '..'), 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', path.join(here, '..'), 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnv() });
   if (r.status !== 0) die(`--source not given and ${here} is not inside a git repo`, 2);
   return r.stdout.trim();
 }
 
 function resolveSha(source, ref) {
-  const r = spawnSync('git', ['-C', source, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', source, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8', env: gitEnv() });
   if (r.status !== 0) die(`cannot resolve ref '${ref}' to a commit in ${source}\n${r.stderr.trim()}`, 1);
   return r.stdout.trim();
 }
@@ -216,7 +216,7 @@ function install(opts) {
     fs.mkdirSync(path.join(installRoot, RELEASES_DIR), { recursive: true });
     const staging = fs.mkdtempSync(path.join(installRoot, `.staging-${sha.slice(0, 12)}-`));
     try {
-      const arch = spawnSync('git', ['-C', source, 'archive', '--format=tar', sha], { maxBuffer: 512 * 1024 * 1024 });
+      const arch = spawnSync('git', ['-C', source, 'archive', '--format=tar', sha], { maxBuffer: 512 * 1024 * 1024, env: gitEnv() });
       if (arch.status !== 0) die(`git archive failed for ${sha}:\n${arch.stderr.toString().trim()}`, 1);
       const untar = spawnSync('tar', ['-x', '-C', staging], { input: arch.stdout });
       if (untar.status !== 0) die(`tar extraction failed:\n${untar.stderr.toString().trim()}`, 1);

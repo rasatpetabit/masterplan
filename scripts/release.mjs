@@ -9,6 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gitEnv } from '../lib/config.mjs';
 
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
@@ -33,7 +34,7 @@ function parseArgs(argv) {
 }
 
 function git(repo, args) {
-  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: gitEnv({}, undefined, { stripIndex: true }) }).trim();
 }
 
 function readJson(repo, file) {
