@@ -6,17 +6,23 @@ export function isolatedGitEnv(overrides = {}) {
 }
 
 export function runGit(dir, args, opts = {}) {
+  const env = opts.env
+    ? gitEnv({}, opts.env, { stripIndex: true })
+    : isolatedGitEnv();
   return String(execFileSync('git', ['-C', dir, ...args], {
     encoding: 'utf8',
-    env: isolatedGitEnv(opts.env),
     ...opts,
+    env,
   })).trim();
 }
 
 export function spawnGit(dir, args, opts = {}) {
+  const env = opts.env
+    ? gitEnv({}, opts.env, { stripIndex: true })
+    : isolatedGitEnv();
   return spawnSync('git', ['-C', dir, ...args], {
     encoding: 'utf8',
-    env: isolatedGitEnv(opts.env),
     ...opts,
+    env,
   });
 }

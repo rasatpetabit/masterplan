@@ -242,3 +242,45 @@ test('gitEnv strips repo-redirecting vars, preserves GIT_INDEX_FILE by default, 
   const overridden = gitEnv({ GIT_INDEX_FILE: '/tmp/override.idx' }, inputEnv, { stripIndex: true });
   assert.equal(overridden.GIT_INDEX_FILE, '/tmp/override.idx', 'explicit overrides must win after stripping');
 });
+
+test('ensureSiblingWorktree (lib/dispatch/multi-repo.mjs) strips inherited GIT_INDEX_FILE and leaves repoA untouched', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-git-iso-sibling-'));
+  const repoA = path.join(tmp, 'repoA');
+  const repoB = path.join(tmp, 'repoB');
+  initRepo(repoA, { 'a.txt': 'from A\n' }, { userName: 'userA', userEmail: 'a@example.invalid' });
+  initRepo(repoB, { 'b.txt': 'from B\n' }, { userName: 'userB', userEmail: 'b@example.invalid' });
+  const beforeA = snapshotRepoA(repoA);
+  const poisoned = makePoisonedEnv(repoA);
+
+  const probeScript = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { ensureSiblingWorktree } from ${JSON.stringify(path.join(REPO_ROOT, 'lib/dispatch/multi-repo.mjs'))};
+    const res = ensureSiblingWorktree({ siblingMain: ${JSON.stringify(repoB)}, slug: 'iso-wt' });
+    assert.equal(res.action, 'create', JSON.stringify(res));
+    assert.equal(fs.readFileSync(path.join(res.path, 'b.txt'), 'utf8'), 'from B\\n');
+    assert.equal(fs.existsSync(path.join(res.path, 'a.txt')), false);
+  `;
+  const probe = spawnSync(process.execPath, ['--input-type=module', '-e', probeScript], {
+    encoding: 'utf8',
+    env: poisoned,
+  });
+  assert.equal(probe.status, 0, `ensureSiblingWorktree probe failed:\nstdout:\n${probe.stdout}\nstderr:\n${probe.stderr}`);
+  assertRepoAIntact(repoA, beforeA);
+});
+
+test('test/helpers/git-env.mjs runGit and spawnGit still strip poisoned GIT_* vars when opts.env is passed', async () => {
+  const { runGit, spawnGit } = await import('./helpers/git-env.mjs');
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-git-iso-helper-'));
+  const repoA = path.join(tmp, 'repoA');
+  const repoB = path.join(tmp, 'repoB');
+  initRepo(repoA, { 'a.txt': 'A\n' });
+  initRepo(repoB, { 'b.txt': 'B\n' });
+  const shaB = execFileSync('git', ['-C', repoB, 'rev-parse', 'HEAD'], { encoding: 'utf8', env: gitEnv({}, process.env, { stripIndex: true }) }).trim();
+  const poisoned = makePoisonedEnv(repoA);
+  assert.equal(runGit(repoB, ['rev-parse', 'HEAD'], { env: poisoned }), shaB);
+  const sp = spawnGit(repoB, ['rev-parse', 'HEAD'], { env: poisoned });
+  assert.equal(sp.status, 0);
+  assert.equal(sp.stdout.trim(), shaB);
+});

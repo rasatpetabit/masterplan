@@ -313,3 +313,31 @@ test('resume-brief-hook: WARN for malformed TOML arrays (missing comma, repeated
     assert.equal(findings[0].severity, 'WARN', `${label} must WARN, got ${JSON.stringify(findings)}`);
   }
 });
+
+test('resume-brief-hook: reject invalid TOML basic-string escapes and decode valid Unicode escapes', () => {
+  // Invalid TOML escape `\_` must NOT be accepted as `_` (would false-PASS a policy TOML rejects).
+  const invalidEvent = writePolicy(`[rules.resume_brief]
+events = ["session\\_start"]
+command = ["node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"]
+`);
+  assert.equal(check('/tmp/repo', { policyPath: invalidEvent })[0].severity, 'WARN');
+
+  const invalidCmdScalar = writePolicy(`[rules.resume_brief]
+events = ["session_start"]
+command = "node /usr/local/bin/mp resume-brief --repo\\_root=$CWD"
+`);
+  assert.equal(check('/tmp/repo', { policyPath: invalidCmdScalar })[0].severity, 'WARN');
+
+  const invalidSurrogate = writePolicy(`[rules.resume_brief]
+events = ["session\\uD800start"]
+command = ["node", "/usr/local/bin/mp", "resume-brief", "--repo-root=$CWD"]
+`);
+  assert.equal(check('/tmp/repo', { policyPath: invalidSurrogate })[0].severity, 'WARN');
+
+  // Valid TOML Unicode escapes (\u005F = '_', \U0000002D = '-') must decode cleanly.
+  const validUnicode = writePolicy(`[rules.resume_brief]
+events = ["session\\u005Fstart"]
+command = ["node", "/usr/local/bin/mp", "resume\\U0000002Dbrief", "--repo-root=$CWD"]
+`);
+  assert.equal(check('/tmp/repo', { policyPath: validUnicode })[0].severity, 'PASS');
+});
