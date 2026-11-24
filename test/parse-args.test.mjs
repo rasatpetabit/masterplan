@@ -63,3 +63,68 @@ test('R9-36: --repo-root=<dir> keeps working unchanged', () => {
   const { flags } = parseArgs(['--repo-root=/tmp/x']);
   assert.equal(flags['repo-root'], '/tmp/x');
 });
+
+// Issue #28: core path/selector value flags accept space-separated `--flag <value>`
+// identically to `--flag=<value>` and fail cleanly via R9-47 when left valueless.
+test('Issue #28: parseArgs parses space-separated VALUE_FLAGS identically to = form', () => {
+  const space = parseArgs(['--state', '/tmp/a/state.yml', '--phase', 'plan']);
+  const eq = parseArgs(['--state=/tmp/a/state.yml', '--phase=plan']);
+  assert.deepEqual(space, eq);
+  assert.equal(space.flags.state, '/tmp/a/state.yml');
+  assert.equal(space.flags.phase, 'plan');
+
+  const allSpace = parseArgs([
+    '--repo-root', '/tmp/repo',
+    '--state', '/tmp/repo/state.yml',
+    '--phase', 'execute',
+    '--plan-index', '/tmp/repo/plan.index.json',
+    '--fragments', '/tmp/repo/frags.json',
+    '--out', '/tmp/repo/out.json',
+    '--slug', 'my-slug',
+    '--wave', '2',
+  ]);
+  const allEq = parseArgs([
+    '--repo-root=/tmp/repo',
+    '--state=/tmp/repo/state.yml',
+    '--phase=execute',
+    '--plan-index=/tmp/repo/plan.index.json',
+    '--fragments=/tmp/repo/frags.json',
+    '--out=/tmp/repo/out.json',
+    '--slug=my-slug',
+    '--wave=2',
+  ]);
+  assert.deepEqual(allSpace, allEq);
+});
+
+test('Issue #28: mp set-phase --state <path> --phase plan matches --state=<path> --phase=plan', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-issue28-'));
+  try {
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, 'schema_version: 6.0\nslug: demo\nphase: brainstorm\nstatus: in-progress\ntasks: []\n');
+    const eq = runCli(['set-phase', `--state=${statePath}`, '--phase=plan', '--force']);
+    assert.equal(eq.status, 0, eq.stderr);
+    fs.writeFileSync(statePath, 'schema_version: 6.0\nslug: demo\nphase: brainstorm\nstatus: in-progress\ntasks: []\n');
+    const space = runCli(['set-phase', '--state', statePath, '--phase', 'plan', '--force']);
+    assert.equal(space.status, 0, space.stderr);
+    assert.deepEqual(JSON.parse(space.stdout), JSON.parse(eq.stdout));
+    assert.equal(JSON.parse(space.stdout).phase, 'plan');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Issue #28: R9-47 rejects bare/valueless --state and --phase with usage exit 2 (not cannot read state file: true)', () => {
+  const r1 = runCli(['status', '--state']);
+  assert.equal(r1.status, 2, `expected exit 2, got ${r1.status}: ${r1.stderr}`);
+  assert.match(r1.stderr, /--state needs a value/);
+  assert.doesNotMatch(r1.stderr, /cannot read state file: true/);
+
+  const r2 = runCli(['set-phase', '--state', '--phase=plan']);
+  assert.equal(r2.status, 2, `expected exit 2, got ${r2.status}: ${r2.stderr}`);
+  assert.match(r2.stderr, /--state needs a value/);
+  assert.doesNotMatch(r2.stderr, /cannot read state file: true/);
+
+  const r3 = runCli(['set-phase', '--state=/tmp/x/state.yml', '--phase=']);
+  assert.equal(r3.status, 2, `expected exit 2, got ${r3.status}: ${r3.stderr}`);
+  assert.match(r3.stderr, /--phase needs a value/);
+});

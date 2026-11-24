@@ -869,7 +869,16 @@ function enforceGoalsSplitBrainGuard(statePath, state, transition) {
 // (does not start with `--`). R9-47: a value flag left without a non-empty string — bare, or
 // followed by another `--option`, or given as `--k=` — is a usage error, checked once after
 // parsing for every name in VALUE_FLAGS. Every other flag keeps today's boolean behaviour.
-const VALUE_FLAGS = new Set(['repo-root']);
+const VALUE_FLAGS = new Set([
+  'repo-root',
+  'state',
+  'phase',
+  'plan-index',
+  'fragments',
+  'out',
+  'slug',
+  'wave',
+]);
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
