@@ -4,7 +4,7 @@
 // here. Results land on stdout; errors exit non-zero with a stderr hint.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -3763,4 +3763,79 @@ test('review-fallback: a valueless reviewer flag is refused at the CLI boundary,
   const r2 = run(['finish-step', `--state=${statePath}`, '--review-fallback-reason']);
   assert.equal(r2.status, 2);
   assert.match(r2.stderr, /--review-fallback-reason must be a string/);
+});
+
+// ---- Issue #20: shared_file_serialization warnings in merge-plan-fragments & validate-plan-index ----
+function runCapture(args) {
+  const r = spawnSync('node', [BIN, ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? 'mp-bin-test-hermetic-session',
+      PI_CODING_AGENT: undefined,
+    },
+  });
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+test('merge-plan-fragments and validate-plan-index surface shared_file_serialization warnings on JSON + stderr', () => {
+  const dir = tmpDir('mp-bin-serial-');
+  const fragsPath = path.join(dir, 'fragments.json');
+  const outIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(fragsPath, JSON.stringify([
+    {
+      key: 'drivers',
+      tasks: [
+        { key: 'd1', description: 'add a', files: ['drivers/a.c', 'drivers/Kbuild'], verify_commands: ['true'] },
+        { key: 'd2', description: 'add b', files: ['drivers/b.c', 'drivers/Kbuild'], verify_commands: ['true'] },
+        { key: 'd3', description: 'add c', files: ['drivers/c.c', 'drivers/Kbuild'], verify_commands: ['true'] },
+      ],
+    },
+  ]));
+
+  const merged = runCapture(['merge-plan-fragments', `--fragments=${fragsPath}`, `--out=${outIdx}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(merged.status, 0, merged.stderr);
+  assert.match(merged.stderr, /^WARN: drivers\/Kbuild appears in 3\/3 tasks and serializes the plan into 3 waves \(hoisting it would yield 1 waves\)$/m);
+  const mOut = JSON.parse(merged.stdout);
+  assert.equal(mOut.tasks, 3);
+  assert.equal(mOut.waves, 3);
+  assert.equal(mOut.warnings.length, 1);
+  assert.equal(mOut.warnings[0].code, 'shared_file_serialization');
+  assert.equal(mOut.warnings[0].file, 'drivers/Kbuild');
+
+  const validated = runCapture(['validate-plan-index', `--plan-index=${outIdx}`]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.match(validated.stderr, /^WARN: drivers\/Kbuild appears in 3\/3 tasks/m);
+  const vOut = JSON.parse(validated.stdout);
+  assert.equal(vOut.valid, true);
+  assert.equal(vOut.warnings.length, 1);
+  assert.equal(vOut.warnings[0].code, 'shared_file_serialization');
+});
+
+test('merge-plan-fragments and validate-plan-index omit warnings and emit empty stderr on clean plans', () => {
+  const dir = tmpDir('mp-bin-clean-');
+  const fragsPath = path.join(dir, 'fragments.json');
+  const outIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(fragsPath, JSON.stringify([
+    {
+      key: 'drivers',
+      tasks: [
+        { key: 'd1', description: 'add a', files: ['drivers/a.c'], verify_commands: ['true'] },
+        { key: 'd2', description: 'add b', files: ['drivers/b.c'], verify_commands: ['true'] },
+        { key: 'd3', description: 'add c', files: ['drivers/c.c'], verify_commands: ['true'] },
+      ],
+    },
+  ]));
+
+  const merged = runCapture(['merge-plan-fragments', `--fragments=${fragsPath}`, `--out=${outIdx}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(merged.status, 0, merged.stderr);
+  assert.equal(merged.stderr, '');
+  const mOut = JSON.parse(merged.stdout);
+  assert.equal('warnings' in mOut, false);
+
+  const validated = runCapture(['validate-plan-index', `--plan-index=${outIdx}`]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.equal(validated.stderr, '');
+  const vOut = JSON.parse(validated.stdout);
+  assert.equal('warnings' in vOut, false);
 });

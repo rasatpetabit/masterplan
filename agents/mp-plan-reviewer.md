@@ -65,6 +65,9 @@ complete artifacts makes the whole review FAIL (fail-closed) — never a silentl
    file, data shape, or contract must agree. Flag a producer with no consumer (or vice-versa), a
    shared file edited by tasks that don't reference each other, and mismatched assumptions across
    the seam where two subsystems meet.
+   - Flag a plan serialized into near-1-task waves because a single shared registration/wiring file
+     appears in most task scopes (`shared_file_serialization`) so it can be revised to hoist
+     wiring into a trailing task or per-task include fragments before plan approval.
 3. **Verify adequacy.** Each task's `verify_commands` should genuinely prove the task's intent —
    not a tautology (`test -f` on a file the task trivially creates), not empty where a behavioural
    check is possible. Flag tasks that would pass their own verify while leaving the intent unmet.

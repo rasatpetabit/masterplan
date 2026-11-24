@@ -97,6 +97,11 @@ A single object, validated at the tool boundary:
   the same wave (maximal parallelism). If two tasks must touch the **same file**, they cannot be
   parallel — declare a `dep` between them so the merge serializes them into different waves. Keep
   each task's `files` tight.
+- **Hoist shared registration/wiring files.** For shared registration/wiring files (`Kbuild`,
+  `Makefile`, `Kconfig`, barrel/index files, doc TOCs, CI workflows), either route all
+  registration edits into a single trailing wiring task that depends on the feature tasks, or use
+  per-task include fragments when the build system supports them, rather than listing the shared
+  file in every feature task's `files` scope.
 - **`codex` is an ADVISORY string** (`"ok"` | `"no"` | `null`), never a boolean or object. It is
   only a hint — final routing is `lib/dispatch/routing.mjs`. Prefer `null` (let the heuristic decide) unless
   you are certain: `"ok"` only for mechanical ≤3-file work with concrete verify commands; `"no"`

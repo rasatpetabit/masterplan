@@ -231,7 +231,7 @@ let replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuest
 let recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview;
 let waiveInterview, reopenInterview, replayLedger;
 let captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture;
-let mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml;
+let mergePlanFragments, validatePlanIndex, analyzePlanSerialization, renderPlanMd, renderPlanHtml;
 let amendPlan;
 let readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope;
 let buildIntentIdentity, verifyCheckpointEvidence;
@@ -312,7 +312,7 @@ async function loadInterview() {
 }
 async function loadPlanMerge() {
   if (mergePlanFragments) return;
-  ({ mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } = await importLazy('../lib/plan-merge.mjs'));
+  ({ mergePlanFragments, validatePlanIndex, analyzePlanSerialization, renderPlanMd, renderPlanHtml } = await importLazy('../lib/plan-merge.mjs'));
 }
 async function loadAmend() {
   if (amendPlan) return;
@@ -3193,6 +3193,10 @@ async function main() {
       if (errors.length) {
         die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
       }
+      const warnings = analyzePlanSerialization(index.tasks);
+      for (const w of warnings) {
+        process.stderr.write(`WARN: ${w.message}\n`);
+      }
       const planMd = renderPlanMd(index, meta);
       // Stamp plan_hash = sha256 of plan.md (mirrors the index-staleness doctor check's source).
       index.plan_hash = `sha256:${createHash('sha256').update(planMd).digest('hex')}`;
@@ -3205,6 +3209,7 @@ async function main() {
         plan_index: outIndex,
         plan_md: planMdPath,
         plan_hash: index.plan_hash,
+        ...(warnings.length ? { warnings } : {}),
       });
       break;
     }
@@ -3222,7 +3227,16 @@ async function main() {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
       }
-      out({ valid: true, tasks: Array.isArray(index.tasks) ? index.tasks.length : 0, path: p });
+      const warnings = analyzePlanSerialization(index.tasks);
+      for (const w of warnings) {
+        process.stderr.write(`WARN: ${w.message}\n`);
+      }
+      out({
+        valid: true,
+        tasks: Array.isArray(index.tasks) ? index.tasks.length : 0,
+        path: p,
+        ...(warnings.length ? { warnings } : {}),
+      });
       break;
     }
     case 'reindex-plan': {

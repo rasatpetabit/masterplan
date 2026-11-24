@@ -125,6 +125,11 @@ wave as a `parallel()` barrier and each implementer asserts its own scope post-r
 two concurrent tasks touching one file is a guaranteed conflict. If two tasks need
 the same file, put them in different (sequential) waves.
 
+For shared registration/wiring files (`Kbuild`, `Makefile`, `Kconfig`, barrel/index files,
+doc TOCs, CI workflows), either route all registration edits into a single trailing wiring
+task that depends on the feature tasks, or use per-task include fragments when the build
+system supports them, rather than listing the shared file in every feature task's `files` scope.
+
 ## Narrative meta (optional)
 Optionally distill a top-level `meta` object from `spec.md` — up to three plain-prose fields:
 - `purpose` — why this work exists / the outcome it serves (1–3 sentences).

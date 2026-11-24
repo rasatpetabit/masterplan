@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import {
   mergePlanFragments,
   validatePlanIndex,
+  analyzePlanSerialization,
   renderPlanMd,
   renderPlanHtml,
   normalizeCodex,
@@ -643,4 +644,140 @@ test('an index with no narrative renders exactly as before', () => {
   for (const bad of [null, 'a string', 42, ['an array'], { purpose: 42 }]) {
     assert.doesNotThrow(() => renderPlanMd({ ...index, meta: bad }, { title: 'Plan' }));
   }
+});
+
+// ── analyzePlanSerialization: Issue #20 shared registration file detection ───
+test('analyzePlanSerialization returns [] for invalid input, < 3 tasks, or < 3 waves', () => {
+  assert.deepEqual(analyzePlanSerialization(null), []);
+  assert.deepEqual(analyzePlanSerialization([]), []);
+  assert.deepEqual(analyzePlanSerialization([
+    { id: 1, wave: 0, files: ['Kbuild'] },
+    { id: 2, wave: 1, files: ['Kbuild'] },
+  ]), []);
+  assert.deepEqual(analyzePlanSerialization([
+    { id: 1, wave: 0, files: ['a.c'] },
+    { id: 2, wave: 0, files: ['b.c'] },
+    { id: 3, wave: 1, files: ['c.c'] },
+  ]), []);
+});
+
+test('analyzePlanSerialization detects a shared registration file serializing disjoint tasks and preserves input', () => {
+  const index = mergePlanFragments([
+    frag('s', [
+      task('t1', { files: ['drivers/a.c', 'drivers/Kbuild'] }),
+      task('t2', { files: ['drivers/b.c', 'drivers/Kbuild'] }),
+      task('t3', { files: ['drivers/c.c', 'drivers/Kbuild'] }),
+      task('t4', { files: ['drivers/d.c', 'drivers/Kbuild'] }),
+    ]),
+  ]);
+  const snapshot = JSON.stringify(index.tasks);
+  assert.equal(new Set(index.tasks.map((t) => t.wave)).size, 4);
+  const warnings = analyzePlanSerialization(index.tasks);
+  assert.equal(JSON.stringify(index.tasks), snapshot, 'input tasks must not be mutated');
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(warnings[0], {
+    code: 'shared_file_serialization',
+    file: 'drivers/Kbuild',
+    task_count: 4,
+    total_tasks: 4,
+    actual_waves: 4,
+    waves_without_file: 1,
+    wave_delta: 3,
+    message: 'drivers/Kbuild appears in 4/4 tasks and serializes the plan into 4 waves (hoisting it would yield 1 waves)',
+  });
+});
+
+test('analyzePlanSerialization does not warn when genuine deps serialize tasks even with a shared file', () => {
+  // Numeric id deps
+  const byId = [
+    { id: 1, wave: 0, files: ['a.c', 'Kbuild'], deps: [] },
+    { id: 2, wave: 1, files: ['b.c', 'Kbuild'], deps: [1] },
+    { id: 3, wave: 2, files: ['c.c', 'Kbuild'], deps: [2] },
+  ];
+  assert.deepEqual(analyzePlanSerialization(byId), []);
+
+  // String key deps (forward-ref order preserved)
+  const byKey = [
+    { id: 1, key: 'k3', wave: 2, files: ['c.c', 'Kbuild'], deps: ['k2'] },
+    { id: 2, key: 'k2', wave: 1, files: ['b.c', 'Kbuild'], deps: ['k1'] },
+    { id: 3, key: 'k1', wave: 0, files: ['a.c', 'Kbuild'], deps: [] },
+  ];
+  assert.deepEqual(analyzePlanSerialization(byKey), []);
+});
+
+test('analyzePlanSerialization normalizes equivalent path spellings and counts once per task', () => {
+  const tasks = [
+    { id: 1, wave: 0, files: ['./drivers/Kbuild', 'drivers/Kbuild', 'a.c'] },
+    { id: 2, wave: 1, files: ['drivers//Kbuild', 'b.c'] },
+    { id: 3, wave: 2, files: ['drivers/sub/../Kbuild', 'c.c'] },
+  ];
+  const warnings = analyzePlanSerialization(tasks);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].file, 'drivers/Kbuild');
+  assert.equal(warnings[0].task_count, 3);
+  assert.equal(warnings[0].wave_delta, 2);
+});
+
+test('analyzePlanSerialization enforces threshold: delta >= 2 && (ratio >= 0.5 || delta >= 3)', () => {
+  // 8 tasks, 3 share Kbuild -> ratio 3/8 = 0.375 < 0.5 and delta 2 < 3 -> no warning
+  const below = [
+    { id: 1, wave: 0, files: ['Kbuild', 't1.c'] },
+    { id: 2, wave: 1, files: ['Kbuild', 't2.c'] },
+    { id: 3, wave: 2, files: ['Kbuild', 't3.c'] },
+    { id: 4, wave: 0, files: ['t4.c'] },
+    { id: 5, wave: 0, files: ['t5.c'] },
+    { id: 6, wave: 0, files: ['t6.c'] },
+    { id: 7, wave: 0, files: ['t7.c'] },
+    { id: 8, wave: 0, files: ['t8.c'] },
+  ];
+  assert.deepEqual(analyzePlanSerialization(below), []);
+
+  // 10 tasks, 4 share Kbuild -> ratio 4/10 = 0.4 < 0.5, but delta = 4 - 1 = 3 >= 3 -> warns
+  const highDelta = [
+    { id: 1, wave: 0, files: ['Kbuild', 't1.c'] },
+    { id: 2, wave: 1, files: ['Kbuild', 't2.c'] },
+    { id: 3, wave: 2, files: ['Kbuild', 't3.c'] },
+    { id: 4, wave: 3, files: ['Kbuild', 't4.c'] },
+    { id: 5, wave: 0, files: ['t5.c'] },
+    { id: 6, wave: 0, files: ['t6.c'] },
+    { id: 7, wave: 0, files: ['t7.c'] },
+    { id: 8, wave: 0, files: ['t8.c'] },
+    { id: 9, wave: 0, files: ['t9.c'] },
+    { id: 10, wave: 0, files: ['t10.c'] },
+  ];
+  const w = analyzePlanSerialization(highDelta);
+  assert.equal(w.length, 1);
+  assert.equal(w[0].wave_delta, 3);
+  assert.equal(w[0].task_count, 4);
+  assert.equal(w[0].total_tasks, 10);
+});
+
+test('analyzePlanSerialization sorts multiple warnings by wave_delta desc, task_count desc, file asc', () => {
+  // 5 tasks assigned across 5 distinct waves externally (e.g. hand-authored waves);
+  // removing file-b collapses to 3 waves (delta 2, count 3)
+  // removing file-a collapses to 3 waves (delta 2, count 3)
+  // file-c appears in 4 tasks (removing collapses to 2 waves -> delta 3, count 4? Wait: file-b & file-a stay!)
+  // Use disjoint shared sets where actualWaves=4 (hand-waved 0,1,2,3) and computeWaveCount gives 2 waves:
+  const tasks = [
+    { id: 1, wave: 0, files: ['z.js', 't1.js'] },
+    { id: 2, wave: 1, files: ['z.js', 't2.js'] },
+    { id: 3, wave: 2, files: ['z.js', 't3.js'] },
+    { id: 4, wave: 0, files: ['a.js', 't4.js'] },
+    { id: 5, wave: 1, files: ['a.js', 't5.js'] },
+    { id: 6, wave: 3, files: ['a.js', 't6.js'] },
+  ];
+  // actualWaves = 4. Removing z.js leaves a.js (3 waves) -> delta = 1 (<2).
+  // Use 5 distinct waves (0..4) with 2 tasks disjoint + 3 sharing z.js + 3 sharing a.js?
+  // Wait: if actualWaves = 5, removing z.js leaves a.js (3 waves) -> delta = 2; removing a.js leaves z.js (3 waves) -> delta = 2!
+  const multi = [
+    { id: 1, wave: 0, files: ['z.js', 't1.js'] },
+    { id: 2, wave: 1, files: ['z.js', 't2.js'] },
+    { id: 3, wave: 2, files: ['z.js', 't3.js'] },
+    { id: 4, wave: 3, files: ['a.js', 't4.js'] },
+    { id: 5, wave: 4, files: ['a.js', 't5.js'] },
+    { id: 6, wave: 0, files: ['a.js', 't6.js'] },
+  ];
+  const warnings = analyzePlanSerialization(multi);
+  assert.deepEqual(warnings.map((x) => x.file), ['a.js', 'z.js']);
+  assert.deepEqual(warnings.map((x) => x.wave_delta), [2, 2]);
 });
