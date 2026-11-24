@@ -393,22 +393,29 @@ emit them under loose/full):
 - Per-small-task "looks good?" / "shall I continue?" confirmations.
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
-**Carve-out marker.** On an **auto-progress turn** — work done, the §2 loop returned a non-gate op
-(`dispatch_fabric` / `--alive`/`--dead`-handshake / `stop wait` / a committed + reconciled wave) and you are closing
-**without** an AUQ — end the turn's text with the literal token
-**`<mp-autoprogress>`**. The global Stop guard
-(`~/.claude/hooks/auq-guard.sh`) stands down when it sees this marker, so it won't force a ceremonial
-AUQ onto an authorized autonomous turn. **Never** emit it on a turn that surfaces a stop-set gate (the
-gate's own AUQ is the turn-close) or when `autonomy` is neither loose nor full. It is a stand-down
-signal for *this plugin's* authorized auto-progress, mirroring the user-side `<no-auq>` hatch.
+**Carve-out marker.** On an **auto-progress turn** — the §2 loop returned a non-gate op and you are
+closing **without** an AUQ — end the turn's text with the literal token **`<mp-autoprogress>`**. The
+marker is valid **only when the turn closes while work it handed off is still live**: a launched
+background wave/run whose completion will re-invoke the controller, or the loop's
+`{op:'stop', reason:'wait'}` because another live run owns the bundle. Finishing a step, a recorded
+wave, an op returned but not yet executed (`dispatch_fabric`, the `--alive`/`--dead` handshake), or a
+pending design/spec/plan step is **never** a reason to close — execute the next op **in the same
+turn**. Nothing live means no marker: the fleet turn-end guard is record-only and cannot see liveness
+— it credits the marker when a masterplan invocation is in the turn's events, and records one without
+that event as a **claimed opt-out** (recorded, never blocked) — so a marker on a finished step ships
+the stall silently. The global Stop guard (`~/.claude/hooks/auq-guard.sh`) stands down when it sees this
+marker, so it won't force a ceremonial AUQ onto an authorized autonomous turn. **Never** emit it on a
+turn that surfaces a stop-set gate (the gate's own AUQ is the turn-close) or when `autonomy` is
+neither loose nor full. It is a stand-down signal for *this plugin's* authorized auto-progress,
+mirroring the user-side `<no-auq>` hatch.
 
 **Turn-close routing (CC-3-trampoline).** Every turn-close in this shell — a stop-set gate's AUQ, an
 auto-progress `<mp-autoprogress>` close, or a plain stop — runs the same canonical **CC-3-trampoline**
 sequence, defined **here**: emit the turn's summary block + exit breadcrumb **exactly once**, at
 turn-close (never per-tool-call — the v7 hook-driven per-turn ceremony is gone, §5), then close with
 the right terminator — an `AskUserQuestion` at a stop-set gate (CD-9), or the `<mp-autoprogress>`
-marker on an authorized auto-progress (above). The §0 version banner is an *invocation*-time
-obligation (first, before anything), **not** part of this turn-close sequence. This router is the
+marker on an authorized auto-progress that closes with a live handoff (above). The §0 version banner
+is an *invocation*-time obligation (first, before anything), **not** part of this turn-close sequence. This router is the
 single in-file enforcement point — no phase-file indirection.
 
 ## 2e — Worktree locus model (bundle-in-MAIN, code-in-WT — create / sweep / commit / teardown)
@@ -880,8 +887,11 @@ finalization surfaces the `branch_finish` local-disposition gate before retireme
 
 **Under `autonomy ∈ {loose, full}`, "needs input" means one of the §2d stop-set gates — nothing else.**
 A turn that finished useful work but hit no gate **auto-progresses**: do the obvious next safe step in
-the same turn (record → commit → dispatch the next wave) and close **without** an AUQ, ending the
-text with the `<mp-autoprogress>` marker (§2d) so the global guard stands down. Do **not** manufacture a
+the same turn (record → commit → dispatch the next wave). Close **without** an AUQ, ending the text
+with the `<mp-autoprogress>` marker (§2d) **only when the close leaves work it handed off still live**
+— a launched background wave/run that will re-invoke the controller, or `stop wait` because another
+live run owns the bundle; a finished step, a recorded wave, or a returned-but-unexecuted op is not a
+close, so execute the next op in the same turn instead. Do **not** manufacture a
 "what next?" / "run codex?" / "Ready for Wave N" question — that over-asking is exactly what §2d forbids.
 Reserve the AUQ for the genuine stop-set.
 
