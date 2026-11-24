@@ -231,7 +231,7 @@ let replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuest
 let recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview;
 let waiveInterview, reopenInterview, replayLedger;
 let captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture;
-let mergePlanFragments, validatePlanIndex, analyzePlanSerialization, analyzeFragmentSerialization, renderPlanMd, renderPlanHtml;
+let mergePlanFragments, validatePlanIndex, analyzePlanSerialization, renderPlanMd, renderPlanHtml;
 let amendPlan;
 let readScopeEvents, scopeContext, taskFilesEvidence, widenActiveScope, reauthorizeScope;
 let buildIntentIdentity, verifyCheckpointEvidence;
@@ -312,7 +312,7 @@ async function loadInterview() {
 }
 async function loadPlanMerge() {
   if (mergePlanFragments) return;
-  ({ mergePlanFragments, validatePlanIndex, analyzePlanSerialization, analyzeFragmentSerialization, renderPlanMd, renderPlanHtml } = await importLazy('../lib/plan-merge.mjs'));
+  ({ mergePlanFragments, validatePlanIndex, analyzePlanSerialization, renderPlanMd, renderPlanHtml } = await importLazy('../lib/plan-merge.mjs'));
 }
 async function loadAmend() {
   if (amendPlan) return;
@@ -3202,7 +3202,7 @@ async function main() {
       if (errors.length) {
         die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
       }
-      const warnings = analyzeFragmentSerialization(fragments);
+      const warnings = analyzePlanSerialization(index.tasks);
       for (const w of warnings) {
         process.stderr.write(`WARN: ${w.message}\n`);
       }

@@ -18,7 +18,6 @@ import {
   mergePlanFragments,
   validatePlanIndex,
   analyzePlanSerialization,
-  analyzeFragmentSerialization,
   renderPlanMd,
   renderPlanHtml,
   normalizeCodex,
@@ -785,14 +784,45 @@ test('analyzePlanSerialization does not inflate wave_delta from external/manual 
   assert.deepEqual(analyzePlanSerialization(handNumbered), []);
 });
 
-test('analyzeFragmentSerialization preserves deps so genuine dep chains with a shared file do not warn', () => {
-  const fragments = [
+test('mergePlanFragments preserves resolved integer deps so analyzePlanSerialization stays consistent on emitted index', () => {
+  const index = mergePlanFragments([
     frag('chain', [
       task('t1', { files: ['a.c', 'Kbuild'], deps: [] }),
       task('t2', { files: ['b.c', 'Kbuild'], deps: ['t1'] }),
       task('t3', { files: ['c.c', 'Kbuild'], deps: ['t2'] }),
       task('t4', { files: ['d.c', 'Kbuild'], deps: ['t3'] }),
     ]),
+  ]);
+  assert.equal(index.tasks[0].deps, undefined, 'root task without deps omits deps field');
+  assert.deepEqual(index.tasks[1].deps, [1]);
+  assert.deepEqual(index.tasks[2].deps, [2]);
+  assert.deepEqual(index.tasks[3].deps, [3]);
+  assert.deepEqual(validatePlanIndex(index), []);
+  assert.deepEqual(analyzePlanSerialization(index.tasks), []);
+});
+
+test('analyzePlanSerialization handles cyclic hand-authored deps without throwing', () => {
+  const cyclic = [
+    { id: 1, wave: 0, files: ['a.js', 'Kbuild'], deps: [3] },
+    { id: 2, wave: 1, files: ['b.js', 'Kbuild'], deps: [1] },
+    { id: 3, wave: 2, files: ['c.js', 'Kbuild'], deps: [2] },
   ];
-  assert.deepEqual(analyzeFragmentSerialization(fragments), []);
+  assert.deepEqual(analyzePlanSerialization(cyclic), []);
+});
+
+test('analyzePlanSerialization detects broad directory declarations overlapping sibling file scopes', () => {
+  const tasks = [
+    { id: 1, wave: 0, files: ['src/'] },
+    { id: 2, wave: 1, files: ['src/'] },
+    { id: 3, wave: 2, files: ['src/a.js'] },
+    { id: 4, wave: 2, files: ['src/b.js'] },
+  ];
+  const warnings = analyzePlanSerialization(tasks);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].file, 'src/');
+  assert.equal(warnings[0].task_count, 4);
+  assert.equal(warnings[0].actual_waves, 3);
+  assert.equal(warnings[0].waves_without_file, 1);
+  assert.equal(warnings[0].wave_delta, 2);
+  assert.match(warnings[0].message, /src\/ overlaps 4\/4 tasks/);
 });

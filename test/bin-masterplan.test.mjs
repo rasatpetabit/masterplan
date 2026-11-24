@@ -3862,4 +3862,31 @@ test('merge-plan-fragments does not emit shared_file_serialization when genuine 
   const mOut = JSON.parse(merged.stdout);
   assert.equal(mOut.waves, 4);
   assert.equal('warnings' in mOut, false);
+
+  // Re-validating the exact emitted plan.index.json must agree (0 warnings) because deps are preserved.
+  const validated = runCapture(['validate-plan-index', `--plan-index=${outIdx}`]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.equal(validated.stderr, '');
+  const vOut = JSON.parse(validated.stdout);
+  assert.equal(vOut.valid, true);
+  assert.equal('warnings' in vOut, false);
+});
+
+test('validate-plan-index does not crash when a structurally valid hand-authored index has cyclic deps', () => {
+  const dir = tmpDir('mp-bin-cyclic-');
+  const ip = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(ip, JSON.stringify({
+    schema_version: '6.0',
+    tasks: [
+      { id: 1, description: 'a', wave: 0, files: ['a.js', 'Kbuild'], verify_commands: [], codex: 'no', deps: [3] },
+      { id: 2, description: 'b', wave: 1, files: ['b.js', 'Kbuild'], verify_commands: [], codex: 'no', deps: [1] },
+      { id: 3, description: 'c', wave: 2, files: ['c.js', 'Kbuild'], verify_commands: [], codex: 'no', deps: [2] },
+    ],
+  }));
+  const res = runCapture(['validate-plan-index', `--plan-index=${ip}`]);
+  assert.equal(res.status, 0, res.stderr);
+  const vOut = JSON.parse(res.stdout);
+  assert.equal(vOut.valid, true);
+  assert.equal(vOut.tasks, 3);
+  assert.equal('warnings' in vOut, false);
 });

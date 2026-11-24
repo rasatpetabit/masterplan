@@ -291,3 +291,76 @@ test('unsequenced-work: auto-discovered by bin/doctor.mjs', () => {
   assert.match(res.stdout, /WARN\s+unsequenced-work:/);
   assert.match(res.stdout, new RegExp(slug));
 });
+
+test('unsequenced-work: inspects later candidate branches when an earlier candidate only has bundle-only commits', () => {
+  const dir = initGitRepo();
+  const slug = 'multi-cand';
+
+  // state.branch diverges with ONLY a bundle-dir commit (clean on its own)
+  runGit(dir, ['checkout', '-b', 'feat/bundle-only']);
+  const bDir = path.join(dir, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bDir, { recursive: true });
+  fs.writeFileSync(path.join(bDir, 'spec.md'), '# spec\n', 'utf8');
+  runGit(dir, ['add', `docs/masterplan/${slug}/spec.md`]);
+  runGit(dir, ['commit', '-m', 'docs: spec only']);
+
+  // coordination.local_run_branch carries real non-bundle implementation code
+  runGit(dir, ['checkout', 'main']);
+  runGit(dir, ['checkout', '-b', 'feat/real-code']);
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'impl.js'), 'export const x = 1;\n', 'utf8');
+  runGit(dir, ['add', 'src/impl.js']);
+  runGit(dir, ['commit', '-m', 'feat: unsequenced code on second candidate']);
+  runGit(dir, ['checkout', 'main']);
+
+  seedBundle(dir, slug, {
+    phase: 'brainstorm',
+    branch: 'feat/bundle-only',
+    coordination: { local_run_branch: 'feat/real-code' },
+  });
+
+  const findings = check(dir);
+  assert.equal(findings.length, 1, JSON.stringify(findings));
+  assert.equal(findings[0].severity, 'WARN');
+  assert.match(findings[0].summary, /branch "feat\/real-code"/);
+});
+
+test('unsequenced-work: does not falsely PASS when repo lacks main/master and HEAD is on the code branch', () => {
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-unseq-nomain-'));
+  runGit(dir, ['init', '-b', 'trunk']);
+  runGit(dir, ['config', 'user.email', 'test@example.com']);
+  runGit(dir, ['config', 'user.name', 'Test User']);
+  fs.writeFileSync(path.join(dir, 'README.md'), 'base\n', 'utf8');
+  runGit(dir, ['add', 'README.md']);
+  runGit(dir, ['commit', '-m', 'init']);
+
+  const slug = 'checked-out-code';
+  runGit(dir, ['checkout', '-b', `masterplan/${slug}`]);
+  fs.writeFileSync(path.join(dir, 'impl.js'), 'export const y = 2;\n', 'utf8');
+  runGit(dir, ['add', 'impl.js']);
+  runGit(dir, ['commit', '-m', 'feat: unsequenced on checked-out branch']);
+
+  seedBundle(dir, slug, { phase: 'brainstorm' });
+
+  const findings = check(dir);
+  assert.equal(findings.length, 1, JSON.stringify(findings));
+  assert.equal(findings[0].severity, 'SKIP', 'must not falsely certify PASS when no base ref resolves');
+});
+
+test('unsequenced-work: reports WARN instead of false PASS when git output exceeds maxBuffer', () => {
+  const dir = initGitRepo();
+  const slug = 'overflow-case';
+  runGit(dir, ['checkout', '-b', `masterplan/${slug}`]);
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'a-very-long-filename-for-buffer-overflow-check.js'), 'export const z = 3;\n', 'utf8');
+  runGit(dir, ['add', 'src/a-very-long-filename-for-buffer-overflow-check.js']);
+  runGit(dir, ['commit', '-m', 'feat: trigger tiny maxBuffer']);
+  runGit(dir, ['checkout', 'main']);
+
+  seedBundle(dir, slug, { phase: 'brainstorm' });
+
+  const findings = check(dir, { maxBuffer: 16 });
+  assert.equal(findings.length, 1, JSON.stringify(findings));
+  assert.equal(findings[0].severity, 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /could not be inspected/);
+});
