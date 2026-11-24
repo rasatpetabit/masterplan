@@ -18,6 +18,7 @@ import {
   mergePlanFragments,
   validatePlanIndex,
   analyzePlanSerialization,
+  analyzeFragmentSerialization,
   renderPlanMd,
   renderPlanHtml,
   normalizeCodex,
@@ -753,23 +754,27 @@ test('analyzePlanSerialization enforces threshold: delta >= 2 && (ratio >= 0.5 |
 });
 
 test('analyzePlanSerialization sorts multiple warnings by wave_delta desc, task_count desc, file asc', () => {
-  // 5 tasks assigned across 5 distinct waves externally (e.g. hand-authored waves);
-  // removing file-b collapses to 3 waves (delta 2, count 3)
-  // removing file-a collapses to 3 waves (delta 2, count 3)
-  // file-c appears in 4 tasks (removing collapses to 2 waves -> delta 3, count 4? Wait: file-b & file-a stay!)
-  // Use disjoint shared sets where actualWaves=4 (hand-waved 0,1,2,3) and computeWaveCount gives 2 waves:
-  const tasks = [
-    { id: 1, wave: 0, files: ['z.js', 't1.js'] },
-    { id: 2, wave: 1, files: ['z.js', 't2.js'] },
-    { id: 3, wave: 2, files: ['z.js', 't3.js'] },
-    { id: 4, wave: 0, files: ['a.js', 't4.js'] },
-    { id: 5, wave: 1, files: ['a.js', 't5.js'] },
-    { id: 6, wave: 3, files: ['a.js', 't6.js'] },
-  ];
-  // actualWaves = 4. Removing z.js leaves a.js (3 waves) -> delta = 1 (<2).
-  // Use 5 distinct waves (0..4) with 2 tasks disjoint + 3 sharing z.js + 3 sharing a.js?
-  // Wait: if actualWaves = 5, removing z.js leaves a.js (3 waves) -> delta = 2; removing a.js leaves z.js (3 waves) -> delta = 2!
+  // Real two-stage bottleneck: t1..t3 share z.js (3 waves); t4..t6 all depend on t3 and share a.js (3 more waves -> 6 waves total).
+  // Hoisting z.js saves 2 waves (6 -> 4, count 3); hoisting a.js also saves 2 waves (6 -> 4, count 3).
+  // Tie-break sorts by file ascending: a.js before z.js.
   const multi = [
+    { id: 1, wave: 0, files: ['z.js', 't1.js'], deps: [] },
+    { id: 2, wave: 1, files: ['z.js', 't2.js'], deps: [] },
+    { id: 3, wave: 2, files: ['z.js', 't3.js'], deps: [] },
+    { id: 4, wave: 3, files: ['a.js', 't4.js'], deps: [3] },
+    { id: 5, wave: 4, files: ['a.js', 't5.js'], deps: [3] },
+    { id: 6, wave: 5, files: ['a.js', 't6.js'], deps: [3] },
+  ];
+  const warnings = analyzePlanSerialization(multi);
+  assert.deepEqual(warnings.map((x) => x.file), ['a.js', 'z.js']);
+  assert.deepEqual(warnings.map((x) => x.wave_delta), [2, 2]);
+  assert.deepEqual(warnings.map((x) => x.actual_waves), [6, 6]);
+  assert.deepEqual(warnings.map((x) => x.waves_without_file), [4, 4]);
+});
+
+test('analyzePlanSerialization does not inflate wave_delta from external/manual wave numbering', () => {
+  // Two disjoint 3-task groups hand-numbered across 5 waves: removing either file still leaves 3 waves (delta = 0).
+  const handNumbered = [
     { id: 1, wave: 0, files: ['z.js', 't1.js'] },
     { id: 2, wave: 1, files: ['z.js', 't2.js'] },
     { id: 3, wave: 2, files: ['z.js', 't3.js'] },
@@ -777,7 +782,17 @@ test('analyzePlanSerialization sorts multiple warnings by wave_delta desc, task_
     { id: 5, wave: 4, files: ['a.js', 't5.js'] },
     { id: 6, wave: 0, files: ['a.js', 't6.js'] },
   ];
-  const warnings = analyzePlanSerialization(multi);
-  assert.deepEqual(warnings.map((x) => x.file), ['a.js', 'z.js']);
-  assert.deepEqual(warnings.map((x) => x.wave_delta), [2, 2]);
+  assert.deepEqual(analyzePlanSerialization(handNumbered), []);
+});
+
+test('analyzeFragmentSerialization preserves deps so genuine dep chains with a shared file do not warn', () => {
+  const fragments = [
+    frag('chain', [
+      task('t1', { files: ['a.c', 'Kbuild'], deps: [] }),
+      task('t2', { files: ['b.c', 'Kbuild'], deps: ['t1'] }),
+      task('t3', { files: ['c.c', 'Kbuild'], deps: ['t2'] }),
+      task('t4', { files: ['d.c', 'Kbuild'], deps: ['t3'] }),
+    ]),
+  ];
+  assert.deepEqual(analyzeFragmentSerialization(fragments), []);
 });

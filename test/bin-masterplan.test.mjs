@@ -3839,3 +3839,27 @@ test('merge-plan-fragments and validate-plan-index omit warnings and emit empty 
   const vOut = JSON.parse(validated.stdout);
   assert.equal('warnings' in vOut, false);
 });
+
+test('merge-plan-fragments does not emit shared_file_serialization when genuine deps already serialize tasks', () => {
+  const dir = tmpDir('mp-bin-depchain-');
+  const fragsPath = path.join(dir, 'fragments.json');
+  const outIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(fragsPath, JSON.stringify([
+    {
+      key: 'chain',
+      tasks: [
+        { key: 'd1', description: 'step 1', files: ['drivers/a.c', 'drivers/Kbuild'], verify_commands: ['true'], deps: [] },
+        { key: 'd2', description: 'step 2', files: ['drivers/b.c', 'drivers/Kbuild'], verify_commands: ['true'], deps: ['d1'] },
+        { key: 'd3', description: 'step 3', files: ['drivers/c.c', 'drivers/Kbuild'], verify_commands: ['true'], deps: ['d2'] },
+        { key: 'd4', description: 'step 4', files: ['drivers/d.c', 'drivers/Kbuild'], verify_commands: ['true'], deps: ['d3'] },
+      ],
+    },
+  ]));
+
+  const merged = runCapture(['merge-plan-fragments', `--fragments=${fragsPath}`, `--out=${outIdx}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(merged.status, 0, merged.stderr);
+  assert.equal(merged.stderr, '');
+  const mOut = JSON.parse(merged.stdout);
+  assert.equal(mOut.waves, 4);
+  assert.equal('warnings' in mOut, false);
+});
