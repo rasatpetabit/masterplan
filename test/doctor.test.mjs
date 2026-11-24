@@ -1,4 +1,4 @@
-// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 12 check modules.
+// test/doctor.test.mjs — v8 L4 doctor: dispatcher + check modules.
 //
 // The slice covers all three opts shapes deliberately: scalar-cap (pure-bundle, no opts),
 // worktree-integrity (git via injected gitExec), codex-auth (host path + injected homeDir/now).
@@ -1221,7 +1221,7 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /owner lock/);
 });
 
-// ---- dispatcher: all 17 modules auto-discovered ----------------------------
+// ---- dispatcher: check modules auto-discovered ----------------------------
 
 test('dispatcher: discovers every check module on disk', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
@@ -1230,7 +1230,7 @@ test('dispatcher: discovers every check module on disk', async () => {
     'codex-auth', 'coord-drift', 'dangling-run', 'index-staleness',
     'legacy-bundle', 'owner-sentinel', 'pi-agent-registration', 'plan-doc-cruft', 'plan-index-schema',
     'plugin-registry-drift', 'rejected-idea-kb', 'routing-policy-health', 'scalar-cap', 'spec-assumptions', 'stale-lock',
-    'stalled-bundle', 'state-schema', 'worktree-integrity',
+    'stalled-bundle', 'state-schema', 'unsequenced-work', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);

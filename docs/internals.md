@@ -35,7 +35,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   (`MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`) and the Pi governed
   boundary owns model resolution; unconfigured Claude Code and Codex hosts use
   host-native selection.
-- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 23 check modules under
+- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 24 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
 
@@ -70,7 +70,7 @@ artifacts — see `commands/masterplan.md` §3b.
 | [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `lib/dispatch-wave.mjs` runs a single wave | `lib/dispatch/` + `lib/dispatch-wave.mjs` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
 | [design-intent-integration.md](internals/design-intent-integration.md) | The design-intent integration as landed: host contract/pin, the interview ledger, §5.3 convergence, the format pin + snapshot, reconciliation, the promotion transaction, checkpoint identity tuples, the knob contracts | `lib/interview.mjs` + `lib/reconcile-intent.mjs` + `lib/promote.mjs` + `lib/checkpoint-evidence.mjs` |
-| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 23 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 24 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 
 ## Cross-cutting References
 

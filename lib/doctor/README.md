@@ -69,6 +69,7 @@ CI rather than silently drifting. `v7 ID` is the ported v7 check id, where appli
 | `rejected-idea-kb` | — | WARN | Durable rejected-idea KB files under `.out-of-scope/` carry the required sections. |
 | `spec-assumptions` | — | WARN | Version-scoped: post-feature bundles whose `spec.md` omits the required `## Assumptions` section. |
 | `stalled-bundle` | — | WARN | A bundle seeded and driven through brainstorm/plan that never recorded any of it (the CD-7 durability contract). |
+| `unsequenced-work` | — | WARN/SKIP | An active pre-execute bundle (`brainstorm`/`plan`) whose code branch or worktree already has non-bundle commits or dirty code edits without a loaded plan. |
 
 **`#9` stays minimal** — v8 bundles are well-formed by construction (`serializeState`), so #9
 guards only the migrate/hand-edit boundary: validate what the control loop dereferences

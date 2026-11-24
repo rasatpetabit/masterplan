@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (23 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (24 check modules).
 
 ## How the doctor works
 
@@ -57,7 +57,7 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 23 check modules
+## The 24 check modules
 
 | Module | Purpose |
 |---|---|
@@ -78,6 +78,7 @@ unit-testable without touching the real host. The main CLI passes
 | `stale-lock` | Checks each bundle directory for a `.lock` file whose mtime is older than 1 hour; warns when found (a crashed run may have left it). |
 | `stalled-bundle` | Pre-execute CD-7 durability: flags brainstorm/plan bundles that have a `spec.md` but no recorded events in `events.jsonl` (session work left only in conversation). Distinct from `dangling-run` (stranded `active_run`). `WARN` per stalled bundle; `SKIP` when no applicable pre-execute bundles exist. |
 | `state-schema` | Validates each bundle's `state.yml` against `lib/bundle.validateCoreState` (the single source of truth for required fields). Bundles with `schema_version < 6` are deferred to `legacy-bundle`. A slug directory with no readable `state.yml` produces a `WARN` (orphan directory). A `state.yml` that parses to zero keys is an `ERROR`. |
+| `unsequenced-work` | Pre-execute discipline: flags active `brainstorm` or `plan` bundles whose linked worktree or candidate run branch (`state.branch`, `state.coordination.local_run_branch`, or `masterplan/<slug>`) already carries non-bundle commits or uncommitted non-bundle edits relative to the repo base ref. Bundle-only commits (`docs/masterplan/<slug>/...`) and unrelated commits on `main` do not trigger. `WARN` per offending bundle; `SKIP` when no active pre-execute bundle exists or repo is not git. |
 | `worktree-integrity` | **Bundle→git:** for each non-archived/non-retired bundle, verifies the recorded `worktree` path and `branch` exist in the git graph (`git worktree list` / `git branch`) — `ERROR` on a broken reference. **Git→bundle** (Phase 2): runs the shared pure `lib/worktree.classifyWorktrees` over the on-disk `.worktrees/*` dirs + bundle records to `WARN` on reconcilable strays — crash-leak (a retired bundle still registered + on disk → remove), repo-move (a dangling admin link → `git worktree repair`), foreign-repo leftover (→ remove), and a legacy `missing` disposition (→ normalize). A plain unowned dev worktree (e.g. `masterplan-ng`) stays untouched, and a repo-move/`missing` is reported once (as the WARN remedy), never also as a bundle→git ERROR. `SKIP` when git is unavailable or no bundles exist. **`--fix`:** records `worktree_disposition=removed_after_merge` for a bundle whose `worktree` is set, unregistered in git, **and gone from disk** — clearing the bundle→git ERROR (the path is preserved as a reversible memento). gone-from-disk is the safety line: an on-disk-but-unregistered worktree (the protected `manual`/active-unregistered case) still exists and is left for the operator; archived/already-retired bundles are skipped, so the fix set is a strict subset of the ERROR set. Idempotent. |
 | `incomplete-archive` | Informational `PASS` per archived bundle whose `state.completion` is `merged` or `incomplete:*` — so a deliberately short-fallen archive is visible rather than mistaken for complete. `SKIP`-free: `PASS` with a single summary when nothing applies. |
 | `legacy-archive` | Informational `PASS` per archived pre-v10 bundle with no completion class (`legacy`) — the absence is reported, never treated as a schema error. Active bundles and archives carrying a real completion class are excluded. |
@@ -116,7 +117,7 @@ markdown file encoding 53 prose checks interpreted by a Sonnet coordinator at ru
 problems: the coordinator had to re-parse and re-interpret the prose on every
 run, and the checks were untestable in isolation.
 
-v8 replaces this with Node.js modules (11 at the v8.2.0 cutover, now 23)
+v8 replaces this with Node.js modules (11 at the v8.2.0 cutover, now 24)
 (`lib/doctor/*.mjs`), each owning a narrow, deterministic scope. The ~38
 **self-instrumentation checks** (which
 verified the plugin's own source files and were only meaningful inside the
