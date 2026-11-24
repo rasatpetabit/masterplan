@@ -279,3 +279,47 @@ test('a slugless bundle_created event does not discharge an obligation', () => {
   fs.writeFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ type: 'bundle_created', predecessor: 'run-a' }) + '\n');
   assert.equal(projectObligations({ repoRoot: repo }).length, 1);
 });
+
+test('non-git root does not recursively scan unrelated nested git repos', () => {
+  const nonGitRoot = makeRepo();
+  const nestedDepth1 = path.join(nonGitRoot, 'nested-repo');
+  fs.mkdirSync(path.join(nestedDepth1, '.git'), { recursive: true });
+  writeBundle(nestedDepth1, 'leaked-depth1', {
+    phase: 'execute',
+    events: [{ type: 'required_successor', slug: 'follow-1', reason: 'handoff', ts: '2026-01-01T00:00:01Z' }],
+  });
+  const nestedDepth2 = path.join(nonGitRoot, 'sub', 'deep-repo');
+  fs.mkdirSync(path.join(nestedDepth2, '.git'), { recursive: true });
+  writeBundle(nestedDepth2, 'leaked-depth2', { phase: 'execute' });
+
+  const brief = resolveResumeBrief({ repoRoot: nonGitRoot });
+  assert.equal(brief.active.length, 0);
+  assert.equal(brief.obligations.length, 0);
+  assert.equal(renderResumeBrief(brief), '');
+  assert.equal(projectObligations({ repoRoot: nonGitRoot }).length, 0);
+});
+
+test('direct bundle in a non-git root still resolves', () => {
+  const nonGitRoot = makeRepo();
+  writeBundle(nonGitRoot, 'direct-run', { phase: 'execute', goalsOutcome: 'shipped' });
+
+  const brief = resolveResumeBrief({ repoRoot: nonGitRoot });
+  assert.equal(brief.active.length, 1);
+  assert.equal(brief.active[0].slug, 'direct-run');
+  const lines = renderResumeBrief(brief).split('\n');
+  assert.equal(lines.length, 5);
+  assert.equal(lines[0], 'slug: direct-run');
+});
+
+test('subdirectory inside an enclosing git repo still discovers the enclosing bundle', () => {
+  const gitRoot = makeRepo();
+  fs.mkdirSync(path.join(gitRoot, '.git'), { recursive: true });
+  writeBundle(gitRoot, 'enclosing-run', { phase: 'review' });
+  const subDir = path.join(gitRoot, 'packages', 'sub');
+  fs.mkdirSync(subDir, { recursive: true });
+
+  const brief = resolveResumeBrief({ repoRoot: subDir });
+  assert.equal(brief.active.length, 1);
+  assert.equal(brief.active[0].slug, 'enclosing-run');
+  assert.match(renderResumeBrief(brief), /^slug: enclosing-run\nphase: review\n/);
+});

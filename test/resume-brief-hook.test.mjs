@@ -341,3 +341,35 @@ command = ["node", "/usr/local/bin/mp", "resume\\U0000002Dbrief", "--repo-root=$
 `);
   assert.equal(check('/tmp/repo', { policyPath: validUnicode })[0].severity, 'PASS');
 });
+
+test('resume-brief-hook: PASS for [delegate.masterplan_resume_brief] with harness and argv array, and WARN fix names delegate array syntax', () => {
+  const passPolicy = writePolicy(`[delegate.masterplan_resume_brief]
+events = ["session_start"]
+harness = ["claude", "pi"]
+command = ["/home/ras/.local/bin/mp", "resume-brief", "--repo-root=."]
+`);
+  const passFindings = check('/tmp/repo', { policyPath: passPolicy });
+  assert.equal(passFindings.length, 1);
+  assert.equal(passFindings[0].id, 'resume-brief-hook');
+  assert.equal(passFindings[0].severity, 'PASS');
+  assert.equal(passFindings[0].fix, null);
+
+  const missingRootPolicy = writePolicy(`[delegate.masterplan_resume_brief]
+events = ["session_start"]
+harness = ["claude", "pi"]
+command = ["/home/ras/.local/bin/mp", "resume-brief"]
+`);
+  const missingRootFindings = check('/tmp/repo', { policyPath: missingRootPolicy });
+  assert.equal(missingRootFindings[0].severity, 'WARN');
+  assert.match(missingRootFindings[0].fix, /\[delegate\.masterplan_resume_brief\]/);
+  assert.match(missingRootFindings[0].fix, /--repo-root=\./);
+  assert.match(missingRootFindings[0].fix, /command array/);
+
+  const missingRulePolicy = writePolicy(`[rules.corrections_nudge]
+events = ["session_start"]
+`);
+  const missingRuleFindings = check('/tmp/repo', { policyPath: missingRulePolicy });
+  assert.equal(missingRuleFindings[0].severity, 'WARN');
+  assert.match(missingRuleFindings[0].fix, /\[delegate\.masterplan_resume_brief\]/);
+  assert.match(missingRuleFindings[0].fix, /command = \["\/home\/ras\/\.local\/bin\/mp", "resume-brief", "--repo-root=\."\]/);
+});

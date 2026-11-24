@@ -342,3 +342,18 @@ test('planned paths are a sorted deduplicated union; absent plan.index.json yiel
   const b = discoverRuns({ repoRoot: MAIN });
   assert.deepEqual(a, b);
 });
+
+test('runs list skips linked worktrees under .claude/worktrees just like .worktrees', () => {
+  const root = tmp();
+  const MAIN = mkrepo(path.join(root, 'main'));
+  bundle(MAIN, 'main-run');
+  bundle(mkrepo(path.join(MAIN, '.worktrees', 'wt'), { gitlink: true }), 'wt-run');
+  bundle(mkrepo(path.join(MAIN, '.claude', 'worktrees', 'wt'), { gitlink: true }), 'claude-wt-run');
+  // Even if the linked worktree mirrors the main bundle slug, main-run is reported once.
+  bundle(path.join(MAIN, '.claude', 'worktrees', 'wt'), 'main-run');
+
+  const parsed = listRuns(MAIN);
+  const slugs = slugsOf(parsed);
+  assert.deepEqual(slugs, ['main-run']);
+  assert.equal(parsed.runs.length, 1);
+});
