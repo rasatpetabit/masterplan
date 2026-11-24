@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.7] — 2026-11-24
+
+Hardens CLI/git isolation, symlinked Pi entrypoints, wave recovery, finish teardown, and `resume-brief` discovery; adds shared-file plan serialization diagnostics (#20) and the `unsequenced-work` doctor check (#25); tightens `<mp-autoprogress>` turn-close wording; and optimizes CLI startup, doctor, hot paths, and test throughput.
+
+### Added
+
+- **Shared-file plan serialization diagnostics (#20):** `analyzePlanSerialization` in `lib/plan-merge.mjs` detects shared registration/wiring files and broad directory declarations that serialize disjoint tasks into extra waves, surfaced as structured `warnings` and `WARN:` stderr lines by `merge-plan-fragments` and `validate-plan-index`. `mergePlanFragments` preserves non-empty resolved integer `deps` on emitted tasks so merge and validation stay consistent on genuine dependency chains. Added wiring-file guidance to `mp-planner`, `mp-subsystem-planner`, and `mp-plan-reviewer`.
+- **`unsequenced-work` doctor check (#25):** `lib/doctor/unsequenced-work.mjs` (check #24) detects active pre-execute bundles (`brainstorm` / `plan`) whose run branch or linked worktree already contains non-bundle commits or uncommitted edits, checking all candidate branches and failing visibly on git inspection errors.
+
+### Fixed
+
+- **`<mp-autoprogress>` live-handoff contract:** Restricted the §2d / §4 `<mp-autoprogress>` marker to turns closing while handed-off work remains live (a launched background wave/run or `{op:'stop', reason:'wait'}`), preventing stalls after completed steps or returned-but-unexecuted ops; added prompt-contract regression suite `test/autoprogress-marker.test.mjs`.
+- **Symlinked CLI entrypoints:** `bin/doctor.mjs`, `bin/register-pi-agents.mjs`, and `scripts/bootstrap-v10.mjs` canonicalize `import.meta.url` and `process.argv[1]` with `realpathSync` so invoking them through Pi's `current` release symlink no longer exits `0` as a silent no-op.
+- **`GIT_*` environment isolation:** Added `gitEnv()` in `lib/config.mjs` and wired it across explicit-repo `bin/`, `lib/`, `scripts/`, `package.json`, and test helpers so inherited `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` / `GIT_INDEX_FILE` variables cannot corrupt the parent repository.
+- **Space-separated CLI value flags (#28):** Expanded `VALUE_FLAGS` in `bin/masterplan.mjs` (`repo-root`, `state`, `phase`, `plan-index`, `fragments`, `out`, `slug`, `wave`) so `--state <path>` / `--phase <p>` work alongside `--flag=<value>` and fail cleanly on missing values.
+- **`resume-brief` and `runs` discovery:** Skipped `.claude` (`.claude/worktrees/*`) in `lib/runs.mjs` to eliminate duplicate active runs; stopped `resolveResumeBrief` from recursively scanning subdirectories of non-git roots (such as `/tmp` or `$HOME`) and eliminated its duplicate `discoverRuns` walk; updated `lib/doctor/resume-brief-hook.mjs` to harden TOML escape/array parsing and recommend `hookctl`'s `[delegate.*]` argv-array syntax.
+- **Wave recovery, finish, and bundle reliability:** Hardened owner lock lifecycle, multi-repo capture, `boundRecovery` path normalization, controller state tampering fail-closed guards, wave attempt races/crashes, DF-4 redrive, finish teardown, spec-gate hashing, goals parser (`goals_enabled=false` and `completion_class` guards), deferred `task-review` batch deduplication, strict event parsing, and atomic writes.
+
+### Changed
+
+- **Performance and maintenance:** Lazy-loaded CLI modules in `bin/masterplan.mjs`, cached per-invocation reads in `lib/finish-step.mjs`, moved `doctor` registration checks in-process with a shared bundle snapshot, optimized hot paths across `task-review`, `scope-reauthorize`, deploy audit, and `finish-loci`, pruned dead exports, scrubbed retired `workflow-map` / `mp-fallback-reviewer` doc drift, split `npm test` vs `npm run test:joint` with cgroup-safe concurrency, and recorded `DF-5` for joint tests targeting unmerged `/srv/workflows` `routing R1` modules.
+
 ## [10.2.6] — 2026-11-22
 
 Execution review and wave recording now measure one artifact against the frozen dispatch base
