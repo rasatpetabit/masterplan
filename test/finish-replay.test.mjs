@@ -792,6 +792,127 @@ test('an install step that pushed the base records pushed_base and the archive o
   assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive');
 });
 
+const QUALIFICATION_BASE = 'qualification/antigravity-v8.0.13';
+const INSTALL_DONE = { deployStepDone: { group: 'install', index: 0, exit: 0 } };
+
+function startQualificationInstall(done = INSTALL_ONLY) {
+  const fx = makeFixture({ done, origin: true });
+  const op = walkToDeploy(fx);
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.equal(op.group, 'install');
+  // The normal merge requires local main/master. Rename MAIN's branch after landing to
+  // exercise the already-merged ledger without bypassing or changing that guard. The
+  // original origin/main remains as a decoy for a mistaken fallback to 'main'.
+  git(fx.MAIN, 'branch', '-m', QUALIFICATION_BASE);
+  return fx;
+}
+
+function assertInstallPushProbe(fx, status, base = QUALIFICATION_BASE) {
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install?.status, 'done');
+  const probe = latest(fx, 'push_probe');
+  assert.equal(probe?.status, status);
+  assert.equal(probe.base, base);
+  assert.equal(probe.head_after, install.head_after);
+  assert.equal(install.pushed_base, status === 'confirmed_pushed' ? install.head_after : undefined);
+  return install;
+}
+
+function assertPlainArchive(fx, op) {
+  assert.equal(op.op, 'stop', JSON.stringify(op));
+  assert.equal(op.reason, 'archived');
+  assert.equal(readState(fx.statePath).status, 'archived');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+}
+
+test('qualification push probe: CLI report records an absent branch as not pushed and archives without a gate', () => {
+  const fx = startQualificationInstall();
+  // ls-remote patterns can match a tail of a refname. This is not the target branch.
+  git(fx.MAIN, 'push', '-q', 'origin', `HEAD:refs/heads/other/refs/heads/${QUALIFICATION_BASE}`);
+  const result = run(['finish-step', `--state=${fx.statePath}`, '--deploy-step-done=install[0]', '--exit=0',
+    '--session=sess-A', '--host=h1', '--now=2000'], { cwd: fx.MAIN });
+  assert.equal(result.status, 0, result.stderr);
+  assertInstallPushProbe(fx, 'confirmed_not_pushed');
+  assertPlainArchive(fx, JSON.parse(result.stdout));
+});
+
+test('qualification push probe: crash-window recovery records an absent branch as not pushed', () => {
+  const fx = startQualificationInstall('done:\n  install:\n    - run: /bin/true\n      check: /bin/true\n');
+  const op = fx.step();
+  assert.equal(assertInstallPushProbe(fx, 'confirmed_not_pushed').source, 'recovery-probe');
+  assertPlainArchive(fx, op);
+});
+
+test('qualification push probe: matching tip stamps pushed_base and archive verification uses the same branch', () => {
+  const fx = startQualificationInstall();
+  git(fx.MAIN, 'push', '-q', 'origin', QUALIFICATION_BASE);
+  const op = fx.step(INSTALL_DONE);
+  const install = assertInstallPushProbe(fx, 'confirmed_pushed');
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+  assert.equal(op.branch, QUALIFICATION_BASE);
+  assert.equal(op.pushed_base, install.head_after);
+  git(fx.MAIN, 'switch', '-q', '--detach');
+  assert.equal(fx.step().ask, 'dispatch-error', 'do not re-offer a push without a target');
+  assert.throws(() => fx.step({ archivePushed: { sha: op.sha } }), /could not resolve the push target/);
+  git(fx.MAIN, 'switch', '-q', QUALIFICATION_BASE);
+  git(fx.MAIN, 'push', '-q', 'origin', QUALIFICATION_BASE);
+  assertPlainArchive(fx, fx.step({ archivePushed: { sha: op.sha } }));
+  assert.equal(latest(fx, 'archive_pushed')?.sha, op.sha);
+});
+
+test('qualification push probe: a different remote tip is confirmed not pushed', () => {
+  const fx = startQualificationInstall();
+  git(fx.MAIN, 'push', '-q', 'origin', `refs/remotes/origin/main:refs/heads/${QUALIFICATION_BASE}`);
+  git(fx.MAIN, 'tag', QUALIFICATION_BASE); // symbolic-ref --short would report heads/<branch>
+  const op = fx.step(INSTALL_DONE);
+  assertInstallPushProbe(fx, 'confirmed_not_pushed');
+  assertPlainArchive(fx, op);
+});
+
+test('qualification push probe: an unreachable origin asks to retry until absence can be confirmed', () => {
+  const fx = startQualificationInstall();
+  // Do not let origin/main's presence mask the absence test on re-entry.
+  git(fx.bare, 'update-ref', '-d', 'refs/heads/main');
+  git(fx.MAIN, 'remote', 'set-url', 'origin', path.join(fx.tmp, 'missing.git'));
+  const op = fx.step(INSTALL_DONE);
+  assertInstallPushProbe(fx, 'indeterminate');
+  assert.equal(op.ask, 'push-probe-indeterminate', JSON.stringify(op));
+  assert.match(op.next, /re-run: mp finish-step .*re-probes origin\/qualification\/antigravity-v8\.0\.13/);
+  assert.equal(fx.step().ask, 'push-probe-indeterminate');
+  git(fx.MAIN, 'remote', 'set-url', 'origin', fx.bare);
+  assertPlainArchive(fx, fx.step());
+});
+
+test('qualification push probe: re-probe adopts a matching qualification tip, not origin/main', () => {
+  const fx = startQualificationInstall();
+  git(fx.MAIN, 'push', '-q', 'origin', QUALIFICATION_BASE);
+  git(fx.MAIN, 'remote', 'set-url', 'origin', path.join(fx.tmp, 'missing.git'));
+  const first = fx.step(INSTALL_DONE);
+  const install = assertInstallPushProbe(fx, 'indeterminate');
+  assert.equal(first.ask, 'push-probe-indeterminate', JSON.stringify(first));
+  git(fx.MAIN, 'remote', 'set-url', 'origin', fx.bare);
+  const again = fx.step();
+  assert.equal(again.gate, 'push_archive', JSON.stringify(again));
+  assert.equal(again.branch, QUALIFICATION_BASE);
+  assert.equal(again.pushed_base, install.head_after);
+});
+
+test('qualification push probe: a detached MAIN records indeterminate and holds the archive stop', () => {
+  const fx = startQualificationInstall();
+  git(fx.MAIN, 'switch', '-q', '--detach');
+  const op = fx.step(INSTALL_DONE);
+  assertInstallPushProbe(fx, 'indeterminate', '(no push target branch)');
+  assert.equal(op.ask, 'push-probe-indeterminate', JSON.stringify(op));
+  assert.match(op.reason, /detached HEAD/);
+  assert.match(op.next, /without dropping the archive commit/);
+  assert.equal(readState(fx.statePath).status, 'archived');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+  assert.equal(fx.step().ask, 'push-probe-indeterminate');
+  git(fx.MAIN, 'switch', '-q', '-C', QUALIFICATION_BASE, 'HEAD');
+  assertPlainArchive(fx, fx.step());
+  assertInstallPushProbe(fx, 'indeterminate', '(no push target branch)');
+});
+
 test('re-entry on an archived bundle without archive_pushed re-emits the push_archive gate', () => {
   const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
   assert.equal(walkInstallPush(fx).gate, 'push_archive');
