@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.2.8] — 2026-11-26
+
+Fixes install-step push probes in repositories that have an `origin` remote but no local `main` or `master`: recording such a step no longer fails after the step has run.
+
+### Fixed
+
+- **Push target without `main`/`master`:** `recordPushedBase` in `lib/finish-step.mjs` passed `detectBase(MAIN)`, which is null in such a repository, so the `push_probe` event failed validation and `mp finish-step --deploy-step-done=install[N]` (and the crash-window recovery probe) exited 4 after the step had already run. Post-merge push operations now resolve the target as the detected base, else MAIN's checked-out branch (`resolvePushTarget`); the archive re-probe and `--archive-pushed` verification use the same target instead of falling back to `main`. A detached MAIN records `status: indeterminate` with `base: '(no push target branch)'` and holds the archive stop until MAIN is reattached.
+- **Honest push classification:** `probeRemotePush` treats a target branch absent on `origin` (`ls-remote --exit-code`) as `confirmed_not_pushed`, a present branch by fetching it and comparing with `head_after`, and any other failure as `indeterminate`; the re-probe shares the classifier.
+- **Tracking ref under non-default fetch mappings:** the probe fetches `+refs/heads/<base>:refs/remotes/origin/<base>`, so a push that landed from another clone is recognized even when `remote.origin.fetch` maps elsewhere or the local tracking ref is stale.
+
 ## [10.2.7] — 2026-11-24
 
 Hardens CLI/git isolation, symlinked Pi entrypoints, wave recovery, finish teardown, and `resume-brief` discovery; adds shared-file plan serialization diagnostics (#20) and the `unsequenced-work` doctor check (#25); tightens `<mp-autoprogress>` turn-close wording; and optimizes CLI startup, doctor, hot paths, and test throughput.
