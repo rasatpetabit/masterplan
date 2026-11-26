@@ -860,6 +860,36 @@ test('qualification push probe: matching tip stamps pushed_base and archive veri
   assert.equal(latest(fx, 'archive_pushed')?.sha, op.sha);
 });
 
+// Another clone pushes the deployed tip while MAIN's fetch mapping would not write
+// refs/remotes/origin/<base>; the probe must still see the real remote tip.
+function pushFromOtherClone(fx) {
+  const other = path.join(fx.tmp, 'other');
+  git(fx.tmp, 'clone', '-q', fx.bare, other);
+  git(other, 'fetch', '-q', fx.MAIN, `refs/heads/${QUALIFICATION_BASE}:refs/heads/${QUALIFICATION_BASE}`);
+  git(other, 'push', '-q', 'origin', QUALIFICATION_BASE);
+  git(fx.MAIN, 'config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/mirror/*');
+}
+
+test('qualification push probe: a push from another clone is confirmed with no local tracking ref', () => {
+  const fx = startQualificationInstall();
+  pushFromOtherClone(fx);
+  try { git(fx.MAIN, 'update-ref', '-d', `refs/remotes/origin/${QUALIFICATION_BASE}`); } catch { /* absent */ }
+  const op = fx.step(INSTALL_DONE);
+  const install = assertInstallPushProbe(fx, 'confirmed_pushed');
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+  assert.equal(op.pushed_base, install.head_after);
+});
+
+test('qualification push probe: a stale tracking ref does not hide a push that landed', () => {
+  const fx = startQualificationInstall();
+  pushFromOtherClone(fx);
+  // MAIN's tracking ref points at an older commit than the remote now carries.
+  git(fx.MAIN, 'update-ref', `refs/remotes/origin/${QUALIFICATION_BASE}`, 'refs/remotes/origin/main');
+  const op = fx.step(INSTALL_DONE);
+  assertInstallPushProbe(fx, 'confirmed_pushed');
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+});
+
 test('qualification push probe: a different remote tip is confirmed not pushed', () => {
   const fx = startQualificationInstall();
   git(fx.MAIN, 'push', '-q', 'origin', `refs/remotes/origin/main:refs/heads/${QUALIFICATION_BASE}`);
